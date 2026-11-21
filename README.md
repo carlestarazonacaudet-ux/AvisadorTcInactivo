@@ -37,7 +37,7 @@ Las zonas deben cubrir únicamente los iconos de la cola de producción, no la b
 Opción 2: generar un .exe de Windows
 En un equipo Windows x64, ejecuta CREAR_EXE.bat. El generador instala, si es necesario, dependencias de compilación y utiliza PyInstaller para intentar crear:
 dist\Avisador_Aldeanos_AoE2.exe
-Para empaquetar OCR, el equipo de compilación necesita Tesseract OCR con eng.traineddata. La compilación no está garantizada en todos los equipos y el ejecutable NO viene incluido en este repositorio. Antes de distribuir un .exe, pruébalo en otro equipo Windows limpio. Más detalles en [la guía de uso](docs/GUIA_DE_USO.md).
+Para empaquetar OCR, el equipo de compilación necesita Tesseract OCR con eng.traineddata. La compilación no está garantizada en todos los equipos y el ejecutable NO viene incluido en este repositorio. Antes de distribuir un .exe, pruébalo en otro equipo Windows limpio. Más detalles en [la guía de uso](Docs/GUIA_DE_USO.md).
 Configuración y datos
 %LOCALAPPDATA%\AoE2Avisador\configuracion.json
 El directorio local permite mantener la calibración entre versiones. No subas a GitHub tus configuraciones personales, capturas privadas ni rutas de archivos de audio. La carpeta .venv, los ejecutables compilados y los archivos temporales están excluidos mediante .gitignore.
