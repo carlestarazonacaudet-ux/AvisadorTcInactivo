@@ -1,7 +1,7 @@
 # AOE2 IDLE TC — Avisador de aldeanos para Age of Empires II: DE
 V21 · Windows · Proyecto experimental (beta)
 
-<img src="[ruta/a/tu/imagen.png](https://github.com/carlestarazonacaudet-ux/AvisadorTcInactivo/blob/main/Images/vistaGeneral.png)" alt="Texto alternativo" width="300" />
+<img src="[(https://github.com/carlestarazonacaudet-ux/AvisadorTcInactivo/blob/main/Images/vistaGeneral.png)]" alt="Texto alternativo" width="300" />
 
 AOE2 IDLE TC es una aplicación de escritorio para Age of Empires II: Definitive Edition que observa la pantalla y avisa cuando deja de detectar producción activa en la cola calibrada del centro urbano. Muestra el tiempo sin producir, el IDLE TC acumulado y una estimación de los aldeanos que se podrían haber creado.
 
