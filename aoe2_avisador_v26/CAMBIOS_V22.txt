@@ -1,0 +1,9 @@
+V22 — 21 de noviembre de 2026
+- Edad mediante cuatro ESCUDOS (I, II, III, IV) con máscara de fondo.
+- Descriptores en escala de grises y bordes: no depende del color del HUD.
+- Calibración de edad: seleccionar únicamente la insignia, no el rótulo.
+- Calibración de pausa: tecla libre, captura tras cuenta atrás.
+- Controles compactos: ↑ superior, ← aviso, → edades, altavoz, pausa.
+- Botón de prueba de controles en menú, sin comenzar monitorización.
+- Persistencia en LocalAppData conservada.
+- Reinicio al cambio a nueva partida conservado.

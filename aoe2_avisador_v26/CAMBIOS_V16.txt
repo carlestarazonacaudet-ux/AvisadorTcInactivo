@@ -1,0 +1,12 @@
+V16 - 20/11/2026
+- Unifica IDLE del aviso y acumulado con el reloj de AoE2 (sin contar tiempo real de Windows).
+- Se conserva la calibracion de pausa con F3 y pausa no suma segundos.
+- Campo editable de permanencia del aviso (0-30 segundos de partida).
+- Nuevo reconocimiento de Alta Edad Media, Feudal, Castillos, Imperial mediante
+  las 4 capturas aportadas por el usuario y calibracion de una sola zona.
+- Display opcional independiente IDLE por edades, monitor y posicion libres.
+- Contadores por edad se cierran al detectar el siguiente nombre dos veces;
+  ninguna lectura OCR inventa segundos, valores no observados son desconocidos.
+- CSV y registros JSON persistentes, reinicio al volver el reloj a cero.
+- Se conserva configuracion en LOCALAPPDATA y modelos previos hombre/mujer.
+- Incluye tests puros y proyecto para empaquetar como EXE en Windows.

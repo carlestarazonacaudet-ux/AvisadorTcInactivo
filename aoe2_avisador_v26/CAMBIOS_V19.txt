@@ -1,0 +1,33 @@
+AVISADOR DE ALDEANOS AOE2: DE — V19
+
+1. REPETICION DEL AVISO SONORO
+   - Pestaña SONIDO Y VOLUMEN > Repetición del sonido durante IDLE TC.
+   - Deslizador y campo numérico (1 a 120 segundos de tiempo de partida).
+   - El primer aviso continúa sonando tras 3 segundos de inactividad.
+   - Las repeticiones usan exclusivamente el reloj del juego: si la partida está
+     pausada, el tiempo de repetición no avanza.
+   - Guardar preferencias aplica el intervalo inmediatamente sin reiniciar.
+
+2. ESCALADO INDEPENDIENTE DE LOS ELEMENTOS
+   - AVISO VISUAL: tamaño del icono 80–480 px y escala de TODO el aviso 50–180 %.
+   - IDLE ACUMULADO: escala propia 50–180 % (incluye el reloj de arena).
+   - IDLE POR EDADES: escala propia 50–180 % (incluye cifras en dorado y total).
+   - BOTONES FLOTANTES: escala propia 50–180 %.
+   - Las posiciones y los monitores siguen siendo independientes y se guardan.
+   - Si un HUD queda demasiado grande para la pantalla, reduce su escala.
+
+3. CONSERVACION DE DATOS
+   - La configuración permanece en %LOCALAPPDATA%\AoE2Avisador\configuracion.json
+   - No es necesario repetir calibraciones al actualizar sobre versiones previas.
+   - Se mantiene el OCR del reloj de partida como única referencia de IDLE TC.
+   - Conserva los 6 modelos de aldeanos, icono rojo, edades y pausas F3.
+
+4. INSTALACION
+   - INICIAR.bat: requiere Python y descarga dependencias si faltan.
+   - CREAR_EXE.bat: compila EN WINDOWS el ejecutable con PyInstaller y OCR.
+   - El ZIP NO incluye un EXE precompilado.
+
+VERIFICACION
+   - Compilación de sintaxis y pruebas automáticas del contador realizadas.
+   - Pruebas de tamaños y widgets realizadas en interfaz simulada.
+   - Pendiente validar en Age of Empires II DE bajo Windows.

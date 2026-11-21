@@ -1,0 +1,8 @@
+AOE2 IDLE TC V26 — Resultados de pruebas
+
+77 pruebas automatizadas: OK.
+Incluyen lectura OCR de reloj sobre césped con textos «Normal - 1.7» y «Extremo», OCR cian sobre fondo HUD y fondo mapa, edad blanca y amarilla, fusión escudo/texto, conflictos, antiparpadeo, progreso verde y acumulados.
+
+Ejecutar: python -m unittest discover -s tests -p "test_*.py" -q
+
+Pendiente comprobar los cambios directamente sobre AoE2 DE en Windows. El ZIP no contiene EXE precompilado; incluye INICIAR.bat y CREAR_EXE.bat.
