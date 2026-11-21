@@ -1,0 +1,23 @@
+AOE2 IDLE TC — CAMBIOS V20
+
+- 13 modelos de tecnologías del TC aportadas por el usuario,
+  incluyendo imágenes progresivamente cubiertas por el velo verde.
+- Detección de tecnología en cola => producción activa, sin sumar IDLE.
+- Clasificación por grupo de plantillas para reducir falsos positivos
+  entre aldeanos y tecnologías, con tratamiento del indicador rojo.
+- Nueva casilla en Detección y límites para activar/desactivar tecnologías.
+- Mandos flotantes con tres botones nuevos independientes:
+  MOSTRAR/OCULTAR IDLE TC, AVISO y EDADES.
+- Se conservan las opciones de Silenciar y Pausar.
+- Estados guardados en LOCALAPPDATA sin borrar zonas previas.
+- Los mandos se distribuyen en dos filas y permiten elegir monitor,
+  posición y escala.
+- INICIAR.bat y CREAR_EXE.bat actualizados para v20 y modelos de tecnologías.
+
+VALIDACIÓN:
+- 35 pruebas automatizadas sobre datos/calculadores y las 19 capturas
+  (13 tecnologías, 6 aldeanos), más pruebas sintéticas de velo verde.
+- Prueba de UI con monitores simulados mediante Xvfb: botones de visibilidad,
+  silenciamiento y pausa.
+- Pendiente prueba sobre Windows y juego en ejecución.
+- Este paquete contiene proyecto y compilador EXE en Windows; NO un exe listo.

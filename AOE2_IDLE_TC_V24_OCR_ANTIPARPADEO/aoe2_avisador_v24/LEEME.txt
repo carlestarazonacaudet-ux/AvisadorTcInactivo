@@ -1,0 +1,193 @@
+AVISADOR DE ALDEANOS V23 - AoE2 Definitive Edition
+==================================================
+
+INSTALACIÓN NORMAL
+1. Descomprime el ZIP en una carpeta nueva (sin borrar tus preferencias).
+2. Haz doble clic en INICIAR.bat. Necesitas Python 3.12 en Windows y
+   conexión a Internet la primera vez para instalar las librerías.
+3. Necesitas Tesseract OCR para leer el reloj y el contador:
+   ejecuta INSTALAR_OCR.bat o instala Tesseract-OCR con idioma eng.
+4. Una vez calibradas las zonas y el sonido, pulsa "Iniciar monitorización".
+
+EXE AUTÓNOMO (OPCIONAL)
+- Ejecuta CREAR_EXE.bat en Windows. El BAT instala requisitos de compilación
+  si hace falta y genera dist\Avisador_Aldeanos_AoE2.exe con OCR incorporado.
+- El ZIP no contiene un ejecutable de Windows ya compilado.
+
+CALIBRAR LA PRODUCCIÓN Y EL RELOJ
+- En Detección y límites, pulsa "Calibrar pantalla".
+- Selecciona la cola de producción y SOLO las cifras del reloj del juego.
+- Para comprobar pausas por tecla de pausa configurada pulsa "Calibrar pausa (tecla de pausa configurada)" siguiendo la
+  guía. Cuando el reloj del juego no avanza, el IDLE no debe crecer.
+- No hace falta recalibrar al abrir el programa ni al cambiar de versión.
+
+CALIBRAR EL INDICADOR ROJO (NUEVO)
+- Abre una partida con el icono de aldeano en ROJO.
+- Detén la monitorización y pulsa "Calibrar icono ROJO".
+- Tras la cuenta atrás, selecciona TODO el icono rojo, sin adornos del HUD.
+- El programa guarda la zona; al aparecer rojo la considera IDLE incluso
+  si sigue viendo la imagen de un aldeano. Si cambias de resolución,
+  interfaz o sitio del icono, recalibra esa zona.
+- No es recomendable calibrar todo el HUD: hay ornamentos rojos que no
+  indican inactividad.
+
+DISPLAY DE EDADES
+- Calibra "Calibrar edad" seleccionando el rótulo de la edad en pantalla.
+- En "IDLE por edades" activa su ventana y elige posición/monitor.
+- Se muestra el IDLE por edad, aldeanos no creados en dorado y TOTAL.
+- Un aldeano se estima como perdido por cada 25s completos de IDLE.
+  Al cambio de edad se asignan las pérdidas al cruzar cada múltiplo de 25s.
+- Si un intervalo no pudo vincularse a ninguna edad, aparece sin asignar.
+- Al detectar un reloj nuevo cerca de 00:00, se reinicia el display.
+
+BOTONES Y RELOJ DE ARENA
+- En "IDLE por edades" activa "Mostrar botones flotantes"; elige
+  monitor, posición y opacidad. SON CLICABLES mientras juegas.
+- SILENCIAR apaga la voz/pitidos/MP3, pero mantiene contadores y visuales.
+- PAUSAR detiene el avisador y congela el IDLE. REANUDAR reactiva.
+- Puedes activarlos también en la ventana principal.
+- En "IDLE acumulado" activa el marcador permanente. El reloj de arena
+  permanece vertical y animado SOLO si sube el IDLE (según reloj del juego).
+  Se tumba horizontal y queda quieto cuando el contador se detiene.
+
+REINICIO Y GUARDADO
+- El detector requiere 2 lecturas coherentes de un reloj que retrocede
+  claramente a los primeros 2 min, por ejemplo 00:18:42 -> 00:00:30.
+- Conserva zonas, sonidos, monitores y posiciones entre partidas y versiones:
+  %LOCALAPPDATA%\AoE2Avisador\configuracion.json
+- Historial de edades en esa misma carpeta. Se puede exportar a CSV.
+
+LIMITACIONES
+- No modifica el juego ni ejecuta aldeanos automáticamente.
+- Con la cola global solo se estima la falta de producción VISIBLE; no
+  identifica un TC concreto si otro está produciendo.
+- Si falla OCR, el tiempo no se inventa ni se incrementa a ciegas.
+- Para ver el HUD flotante sobre el juego usa "ventana sin bordes".
+
+
+NOVEDADES V19 - AJUSTES SONOROS Y TAMANOS
+
+- SONIDO Y VOLUMEN > Repetición del sonido durante IDLE TC:
+  Escoge de 1 a 120 segundos (6 s de fábrica) con la barra o el campo numérico.
+  El primer aviso sigue activándose tras 3 s de IDLE. Las repeticiones usan
+  SOLO el reloj de la partida; tecla de pausa configurada y pausa manual congelan el acumulado.
+
+- AVISO VISUAL > Apariencia y posición:
+  Cambia el tamaño del icono (80 a 480 px) y la escala de TODO el panel
+  (50 a 180 %), también para letras y contadores.
+
+- IDLE ACUMULADO, IDLE POR EDADES y botones flotantes:
+  En sus apartados encontrarás su propia escala de 50 a 180 %, independiente
+  de los demás marcadores. El reloj de arena también cambia de tamaño.
+
+- Pulsa Guardar preferencias para aplicar el nuevo intervalo de sonido y
+  reconstruir los avisos visibles sin detener la partida. Se conserva la
+  calibración, monitor y posición configurados. Si el panel queda demasiado
+  grande para tu monitor, disminuye la escala.
+
+- Las pruebas de tamaño se han realizado en una interfaz Linux simulada;
+  esta versión todavía necesita validarse sobre el juego en Windows.
+
+
+NOVEDADES V20 - TECNOLOGÍAS DEL CENTRO URBANO + BOTONES HUD
+=========================================================
+
+1) DETECCIÓN DE TECNOLOGÍAS
+- La carpeta tech_templates incluye las 13 imágenes de tecnologías que has
+  compartido, también con distintas capas verdes de progreso.
+- En «Detección y límites» está activado por defecto «Reconocer tecnologías
+  del centro urbano como PRODUCCIÓN activa».
+- Cuando se identifica una tecnología dentro de la COLA DE PRODUCCIÓN
+  CALIBRADA, el TC se considera ocupado: NO aumenta IDLE ni suenan avisos
+  por falta de aldeanos en esa cola. Cuando desaparece y no hay producción,
+  se vuelve a contar la inactividad con el reloj de la partida.
+- En V22, el rojo generalizado del propio icono representa TC inactivo
+  incluso si se reconoce su silueta. En una cola global, un segundo icono
+  activo sí impide contar IDLE para esa cola.
+- Se comparan de forma separada aldeanos y tecnologías para tolerar el
+  velo verde y reducir coincidencias falsas.
+- Si el programa ya estaba monitorizando al cambiar esta opción,
+  pulsa Detener e Iniciar para recargar los modelos.
+
+2) NUEVOS BOTONES FLOTANTES DE VISIBILIDAD
+- En «IDLE por edades», activa los mandos flotantes.
+- Además de SILENCIAR y PAUSAR, aparecen tres botones independientes:
+  • IDLE TC: muestra/oculta el marcador acumulado superior.
+  • AVISO: muestra/oculta el aviso visual grande de la izquierda
+    (cuando existe una alerta y se ha elegido un modo con aviso visual).
+  • EDADES: muestra/oculta el display derecho de las edades.
+- El botón de edades requiere calibrar previamente la región del rótulo.
+- Los botones cambian entre MOSTRAR y OCULTAR y guardan la elección.
+- OCULTAR UN DISPLAY NO INTERRUMPE la lectura ni reinicia el tiempo IDLE.
+- Los botones flotantes son clicables y mantienen sus ajustes de monitor,
+  posición, transparencia y tamaño. Se disponen en dos filas.
+
+3) ACTUALIZACIÓN
+- Se usan las calibraciones previas; no hace falta calibrar las zonas de
+  tecnología una por una.
+- Las zonas de captura deben incluir la cola real, no los botones de
+  investigación del edificio ni los demás adornos del HUD.
+- El archivo INICIAR.bat abre avisador_v23.py; CREAR_EXE.bat incorpora
+  tech_templates en el ejecutable que se genere en Windows.
+- El EXE de Windows no está incluido en este ZIP. CREAR_EXE.bat lo compila
+  usando PyInstaller y una instalación de Tesseract con datos OCR.
+
+LÍMITES
+- El reconocimiento sigue siendo visual: puede necesitar ajustes de umbral
+  tras cambiar resolución, tamaño de interfaz o una actualización del juego.
+- En cola global, «hay una producción» no significa que TODOS los centros
+  urbanos estén ocupados; no se contabilizan por separado sin indicadores
+  independientes visibles para cada TC.
+- La validación definitiva debe realizarse con AoE2 DE abierto en Windows.
+
+
+NOVEDADES V22 - ICONOS ORIGINALES + ESTADOS NORMAL / VERDE / ROJO
+================================================================
+Problema corregido: la V20 dejaba de detectar algunas tecnologías porque
+solo disponía de recortes de pantalla y requería una confianza distinta
+para aldeanos y tecnologías. También podía marcar actividad en el estado
+rojo del icono.
+
+- Se han incorporado las 12 imágenes originales del usuario en
+  iconos_originales/. Se convierten a plantillas de tamaño de interfaz:
+  23 plantillas para tecnologías y otros indicadores de actividad, 8 para
+  aldeanos (se incluyen también los recortes anteriores).
+- En la COLA DE PRODUCCIÓN CALIBRADA, cualquiera de los iconos reconocidos
+  en su apariencia normal o cubierto parcial o totalmente de verde es
+  actividad: NO suma IDLE.
+- Si ese icono está teñido de ROJO (estado bloqueado), o no hay icono,
+  se considera inactivo: el IDLE aumenta con el reloj de partida.
+- Se detecta el tinte ROJO generalizado sin confundirlo con las partes rojas propias
+  de escudos, vestimenta o ilustraciones. La calibración roja debe abarcar el icono completo.
+- Cuando hay un icono rojo y otro produciendo en una misma cola GLOBAL,
+  la cola se considera activa. En modo individual se trata cada indicador
+  por separado. La cola global no garantiza detectar todos los TCs.
+- Se detecta el verde muy intenso aunque tape el 100 % del icono.
+- Las comparaciones preprocesadas se reutilizan para reducir trabajo de CPU.
+- No se borra ni se reemplaza configuracion.json al actualizar; todas las
+  zonas y preferencias siguen en %LOCALAPPDATA%\AoE2Avisador\.
+
+RECOMENDACIONES DE CALIBRACIÓN
+- Selecciona EXCLUSIVAMENTE la zona donde salen los iconos en la COLA DE
+  PRODUCCIÓN. No marques los botones de tecnologías del TC ni la barra de
+  recursos. Si cambias de resolución o escala de interfaz, recalibra.
+- El umbral recomendado para aldeanos es 0.58. Evita umbrales demasiado
+  altos si ves falsos IDLE al crear aldeanos.
+- Activa «Reconocer tecnologías del centro urbano como PRODUCCIÓN activa».
+- El registro indica «aldeano», «tecnologia», «progreso verde intenso»,
+  «bloqueado rojo» o «cola vacía / no reconocida». Es útil para depurar.
+- Para usar varios TCs de forma independiente hacen falta zonas visibles
+  distintas de cada TC. Un único indicador global no distingue todos.
+
+INSTALACIÓN / COMPILACIÓN
+- Ejecuta INICIAR.bat (prepara dependencias desde Windows).
+- CREAR_EXE.bat genera el EXE en Windows usando PyInstaller, con las
+  plantillas nuevas y el OCR que tengas instalado en el equipo de compilación.
+- Este ZIP contiene código y recursos: NO un EXE Windows precompilado.
+- Los resultados de las pruebas automatizadas no sustituyen una partida
+  real con tu resolución y tus opciones gráficas.
+
+V22: Detección por escudos I/II/III/IV con máscara de fondo. Recalibrar zona de edad seleccionando SOLO el escudo. Controles compactos ↑ ← →, Ⅱ, 🔊; prueba de mandos desde Configuración. Pausa calibrable sin tecla fija.
+
+
+V23: iconos I–IV confirmados por el usuario; máscaras PNG que excluyen el fondo EXTERIOR, conservan interior oscuro y números romanos. Ver CAMBIOS_V23.md.

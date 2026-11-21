@@ -1,0 +1,12 @@
+AOE2 IDLE TC — CAMBIOS V21
+
+1. Añadidos los 12 iconos originales aportados para reforzar el detector.
+2. Normal y cualquier porcentaje de progreso verde = TC ocupado.
+3. Icono teñido de rojo, incluso si se reconoce = inactivo.
+4. Si la cola global muestra un icono rojo y otro activo, prevalece el activo.
+5. Mantiene los 13 recortes previos y 6 aldeanos previos.
+6. Contadores, OCR, estadísticas por edades, avisos y overlays conservados.
+7. Configuración guardada en LOCALAPPDATA, compatible con V20.
+8. Se incluye INICIAR.bat y generador de EXE en Windows (no EXE compilado).
+
+Calibra únicamente los iconos visibles en la cola; no incluyas recursos del HUD.

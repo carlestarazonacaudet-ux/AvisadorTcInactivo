@@ -1,0 +1,8 @@
+AOE2 IDLE TC V24 — Resultados de comprobaciones
+
+65 tests unitarios ejecutados correctamente con Python, OpenCV y Tesseract.
+Incluyen: OCR cian/blanco/amarillo, pausa, retorno a partida, confirmación 1s con reloj de juego, saltos de OCR, múltiples TC y comparativa de escudos.
+
+Las pruebas se ejecutaron sin Age of Empires II en Windows. No constituye certificación del comportamiento en partida real.
+
+Ejecutar: python -m unittest discover -s tests -p "test_*.py" -v

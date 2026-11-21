@@ -1,0 +1,42 @@
+AVISADOR DE ALDEANOS AoE2 DE - V18
+=================================
+
+NOVEDADES
+1) El IDLE actual, el acumulado y el IDLE de las cuatro edades usan un
+   único motor temporal basado EXCLUSIVAMENTE en el reloj del juego (OCR).
+   Si el reloj no avanza, no crece el IDLE. En pausa F3 tampoco.
+2) Detecta una nueva partida tras una caída clara del reloj a los primeros
+   2 minutos, por ejemplo 00:22:18 -> 00:00:30. Requiere dos lecturas
+   coherentes para evitar reinicios por OCR defectuoso. Limpia la tabla de
+   edades, IDLE, aldeanos no creados y restablece los límites de aviso.
+3) Desglose por edades (alta Edad Media, Feudal, Castillos e Imperial):
+   columna IDLE; segunda columna dorada "NO CREADOS"; total final de ambos.
+   Se asigna cada aldeano perdido a la edad en que el IDLE total cruza
+   otro tramo completo de 25 segundos. El total coincide exactamente con
+   las pérdidas atribuidas a las edades más las no asignadas.
+4) Botones flotantes SILENCIAR/ACTIVAR SONIDO y PAUSAR/REANUDAR.
+   Son clicables, tienen monitor y posición libres. Silenciar NO pausa los
+   contadores. Pausar el AVISADOR congela las cuentas y los avisos; NO
+   pausa la partida de AoE2. Si el juego muestra PAUSA por F3, el motor
+   también se congela.
+5) La opción "Calibrar icono ROJO" permite elegir un icono rojo en pantalla.
+   Rojo tiene prioridad: cuenta como IDLE aunque se reconozca aldeano.
+   IMPORTANTE: se calibra SOLO el icono rojo, no todo el HUD, para evitar
+   falsos positivos por ornamentación roja.
+6) El HUD flotante "IDLE TC ACUMULADO" incorpora un reloj de arena:
+   vertical y con arena animada cuando el IDLE crece; horizontal y quieto
+   al producir aldeanos o estar en pausa. Es solo animación; NO cuenta
+   segundos por fotogramas del ordenador.
+7) Se conservan los dos selectores de monitor, la posición libre, los
+   sonidos personalizados, el control de volumen, el modo visual/sonoro y
+   las zonas guardadas en %LOCALAPPDATA%\AoE2Avisador.
+
+ATENCIÓN
+- La cola global NO permite distinguir individualmente TCs parados si
+  otro TC está fabricando. El rojo se detecta SOLO en la zona calibrada.
+- El número de aldeanos no creados es un estimado teórico: 1/25s de IDLE.
+- Para usar el reloj del juego y los límites se necesita Tesseract OCR.
+- Esta distribución incluye CÓDIGO Y BAT; NO incluye el .EXE ya compilado.
+  CREAR_EXE.bat genera el .EXE en Windows y necesita conexión para
+  instalar las herramientas solo durante la compilación.
+- La integración real con AoE2 DE y Windows aún debe probarse en tu PC.
