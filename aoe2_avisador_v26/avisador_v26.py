@@ -22,8 +22,7 @@ import time
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
-from tkinter.font import Font
-from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageSequence, ImageTk
+from PIL import Image, ImageDraw, ImageOps, ImageSequence, ImageTk
 
 import cv2
 import mss
@@ -82,8 +81,44 @@ def picture_frame(paper, thickness, style='madera_tallada'):
 
 
 
-def parchment_panel(parent, *, vine_row=None, appearance=None, edge_to_edge=False,
-                    transparent_interior=False, **options):
+def paint_hanging_vine(paper, ornament_width, ornament_height):
+    """Continúa la rama derecha hasta la mitad sin estirar sus hojas."""
+    end = paper.height // 2
+    start = min(round(ornament_height * .7), end)
+    length = end - start
+    if length < 4:
+        return
+    scale = 3
+    leaf = max(5, round(ornament_width * .095))
+    width = leaf * 3
+    strip = Image.new('RGBA', (width * scale, (length + 1) * scale))
+    draw = ImageDraw.Draw(strip)
+
+    def stem_x(y):
+        return width * .62 + leaf * .23 * math.sin(y / max(3, leaf) * 1.3)
+
+    stem = [(round(stem_x(y) * scale), y * scale) for y in range(length + 1)]
+    draw.line(stem, fill='#274A2C', width=scale * 2)
+    draw.line(stem, fill='#778F4A', width=scale)
+    greens = (('#547D3C', '#A7BF6B'), ('#376A40', '#88AA67'), ('#436D32', '#B7C76E'))
+    for i, y in enumerate(range(leaf // 2, length - leaf, max(5, leaf - 2))):
+        x = stem_x(y)
+        side = (-1) ** (i + 1)
+
+        def point(across, down):
+            return (round((x + side * across * leaf) * scale), round((y + down * leaf) * scale))
+
+        shape = ((0, 0), (.08, -.26), (.31, -.35), (.52, -.22), (.78, .15),
+                 (1.05, .64), (.66, .54), (.28, .47), (.11, .31))
+        dark, light = greens[i % len(greens)]
+        draw.polygon([point(*p) for p in shape], fill=dark, outline='#26472D', width=scale)
+        draw.polygon([point(*p) for p in (shape[0], *shape[1:6], (.49, .08))], fill=light)
+        draw.line((point(0, 0), point(.55, .21), point(.93, .55)), fill='#B6C77D', width=2)
+    strip = strip.resize((width, length + 1), Image.Resampling.LANCZOS)
+    paper.paste(strip, (paper.width - width, start), strip)
+
+
+def parchment_panel(parent, *, vine_row=None, appearance=None, **options):
     """Marco dorado con grano de papel y bordes envejecidos."""
     border = int(options.get('highlightthickness', 0))
     vines = ()
@@ -94,11 +129,9 @@ def parchment_panel(parent, *, vine_row=None, appearance=None, edge_to_edge=Fals
             vines = tuple(asset.crop((x, top, x + tile_width, top + tile_height)).convert('RGBA')
                           for x in (0, tile_width))
         padding = {axis: options.pop(axis, 0) for axis in ('padx', 'pady')}
-    transparent_interior = transparent_interior and os.name == 'nt'
-    background = (HUD_KEY_COLOR if transparent_interior else
-                  hud_colors(appearance)[0] if appearance is not None else PARCHMENT)
+    background = hud_colors(appearance)[0] if appearance is not None else PARCHMENT
     texture = None
-    if appearance is not None and not transparent_interior:
+    if appearance is not None:
         texture_info = HUD_TEXTURES.get(appearance.get('marco_fondo', HUD_APPEARANCE['marco_fondo']))
         if texture_info:
             with Image.open(BASE / texture_info[0]) as asset:
@@ -116,9 +149,8 @@ def parchment_panel(parent, *, vine_row=None, appearance=None, edge_to_edge=Fals
         frame.content = hud_group(frame, bg=background, **padding) if appearance is not None else parchment_panel(frame, **padding)
         top_gap = round({1: 17, 2: 18, 3: 10}.get(vine_row, 30) * border / PANEL_BORDER)
         frame_width = max(8, round(11 * border / PANEL_BORDER))
-        inset_gap = max(0, frame_width - border) if edge_to_edge else 7
-        frame.content.pack(fill='both', expand=True, padx=inset_gap + overhang[0],
-                           pady=(top_gap + overhang[1], inset_gap + overhang[1]))
+        frame.content.pack(fill='both', expand=True, padx=7 + overhang[0],
+                           pady=(top_gap + overhang[1], 7 + overhang[1]))
 
     def draw_paper(event):
         if event.width < 2 or event.height < 2:
@@ -153,6 +185,8 @@ def parchment_panel(parent, *, vine_row=None, appearance=None, edge_to_edge=Fals
                 paper.paste(interior, overhang)
             vine_width = max(1, min(round(146 * border / PANEL_BORDER), width * 47 // 100))
             vine_height = min(height, max(1, round(vine_width * tile_height / tile_width)))
+            if vine_row == 2:
+                paint_hanging_vine(paper, vine_width, vine_height)
             for vine, x in zip(vines, (0, width - vine_width)):
                 ornament = vine.resize((vine_width, vine_height), Image.Resampling.LANCZOS)
                 if frame.hud_overhang and os.name == 'nt':
@@ -213,9 +247,8 @@ def hud_group(parent, **options):
 
 class HudLabel(tk.Label):
     """Etiqueta con fondo continuo e imagen RGBA opcional."""
-    def __init__(self, parent, *, art=None, keyed_art=False, **options):
+    def __init__(self, parent, *, art=None, **options):
         self.art = art
-        self.keyed_art = keyed_art
         self._paint = None
         if art is not None:
             self._size_image = tk.PhotoImage(master=parent, width=art.width, height=art.height)
@@ -231,10 +264,7 @@ class HudLabel(tk.Label):
         width, height = paper.size
         if self.art is not None:
             x, y = (width - self.art.width) // 2, (height - self.art.height) // 2
-            mask = self.art.getchannel('A')
-            if self.keyed_art:
-                mask = mask.point(lambda alpha: 255 if alpha >= 112 else 0)
-            paper.paste(self.art, (x, y), mask)
+            paper.paste(self.art, (x, y), self.art)
         photo = ImageTk.PhotoImage(paper, master=self.canvas)
         self.canvas.itemconfigure(self.background_item, image=photo)
         self.canvas.photo = photo
@@ -242,9 +272,14 @@ class HudLabel(tk.Label):
         left = anchor.endswith('w')
         right = anchor.endswith('e') and anchor != 'center'
         x = 2 if left else width - 2 if right else width // 2
+        wrap = self.winfo_pixels(self.cget('wraplength'))
+        if wrap:
+            padding = self.winfo_pixels(self.cget('padx'))
+            wrap = min(wrap, max(1, width - 2 * padding))
         self.canvas.coords(self.caption_item, x, height // 2)
         self.canvas.itemconfigure(self.caption_item, text=self.cget('text'), fill=self.cget('fg'),
-                                  font=self.cget('font'), width=self.winfo_pixels(self.cget('wraplength')),
+                                  font=self.cget('font'), width=wrap,
+                                  justify=self.cget('justify'),
                                   anchor='w' if left else 'e' if right else 'center')
 
     def configure(self, cnf=None, **options):
@@ -256,95 +291,20 @@ class HudLabel(tk.Label):
     config = configure
 
 
-class PulsingHudLabel(HudLabel):
+class SoftPulseHudLabel(HudLabel):
+    """Aclara las letras suavemente sin variar su tamaño ni su posición."""
     def __init__(self, parent, *, size, color, **options):
-        self.base_size = size
-        self.peak_size = round(size * 1.5)
-        self.ink = color
-        self.job = None
-        self.start_time = 0
-        font = Font(root=parent, family='Segoe UI', size=size, weight='bold')
-        self.pulse_font = font
-        super().__init__(parent, fg=color, font=('Segoe UI', self.peak_size, 'bold'),
-                         **options)
-        self.bind('<Map>', self._start, add='+')
-        self.bind('<Unmap>', self._stop, add='+')
-        self.bind('<Destroy>', self._stop, add='+')
-
-    def _render(self, paper):
-        super()._render(paper)
-        self._apply_pulse()
-
-    def _start(self, _event):
-        if self.job is None:
-            self.start_time = time.monotonic()
-            self._tick()
-
-    def _stop(self, _event):
-        if self.job is not None:
-            self.after_cancel(self.job)
-            self.job = None
-
-    def _apply_pulse(self):
-        elapsed = time.monotonic() - self.start_time if self.start_time else 0
-        pulse = (1 - math.cos(2 * math.pi * elapsed / 1.15)) / 2
-        size = round(self.base_size + (self.peak_size - self.base_size) * pulse)
-        self.pulse_font.configure(size=size)
-        rgb = (round(value / 257 + (255 - value / 257) * .65 * pulse)
-               for value in self.winfo_rgb(self.ink))
-        shade = '#{:02x}{:02x}{:02x}'.format(*rgb)
-        self.canvas.itemconfigure('caption', font=self.pulse_font, fill=shade)
-
-    def _tick(self):
-        self._apply_pulse()
-        self.job = self.after(40, self._tick)
-
-
-class HeartbeatHudLabel(HudLabel):
-    """Escala el mismo rótulo con el centro fijo y sin recomponer el fondo."""
-    def __init__(self, parent, *, size, color, keyed=False, **options):
-        self.point_size = size
-        self.keyed = keyed
         self.job = None
         self.started = 0.0
-        self.frame_index = None
-        self.frames = {}
-        self.master_art = None
         super().__init__(parent, fg=color, font=('Segoe UI', size, 'bold'), **options)
-        self.heartbeat_item = self.canvas.create_image(0, 0)
+        self.ink = tuple(round(channel / 257) for channel in self.winfo_rgb(color))
         self.bind('<Map>', self._start, add='+')
         self.bind('<Unmap>', self._stop, add='+')
         self.bind('<Destroy>', self._stop, add='+')
 
     def _render(self, paper):
         super()._render(paper)
-        self.canvas.itemconfigure(self.caption_item, state='hidden')
-        center = (paper.width // 2, paper.height // 2)
-        self.canvas.coords(self.heartbeat_item, *center)
-        available = max(1, paper.width - 2 * self.winfo_pixels(self.cget('padx')))
-        available_height = max(1, paper.height - 4)
-        layout = (available, available_height, self.cget('text'), self.cget('fg'))
-        if self.master_art is None or self.layout != layout:
-            self.layout = layout
-            self.master_art = self._make_art(*layout)
-            self.frames.clear()
-            self.frame_index = None
-        self._paint_heartbeat()
-
-    def _make_art(self, width, height, text, color):
-        pixels = max(2, round(self.point_size * self.winfo_fpixels('1p') * 1.5))
-        font_path = Path(os.environ.get('WINDIR', r'C:\Windows')) / 'Fonts' / 'segoeuib.ttf'
-        try:
-            font = ImageFont.truetype(str(font_path), pixels * 3)
-        except OSError:
-            font = ImageFont.load_default(size=pixels * 3)
-        stroke = max(2, pixels // 9)
-        x1, y1, x2, y2 = font.getbbox(text, stroke_width=stroke)
-        art = Image.new('RGBA', (x2 - x1 + 4, y2 - y1 + 4))
-        ImageDraw.Draw(art).text((2 - x1, 2 - y1), text, font=font, fill=color,
-                                 stroke_width=stroke, stroke_fill='#291B15')
-        ratio = min(1 / 3, width / art.width, height / art.height)
-        return art, ratio
+        self._update_color()
 
     def _start(self, _event):
         if self.job is None:
@@ -356,28 +316,15 @@ class HeartbeatHudLabel(HudLabel):
             self.after_cancel(self.job)
             self.job = None
 
-    def _paint_heartbeat(self):
-        if self.master_art is None:
-            return
+    def _update_color(self):
         elapsed = time.monotonic() - self.started if self.started else 0
-        pulse = (1 - math.cos(2 * math.pi * elapsed / 2.8)) / 2
-        index = round(pulse * 90)
-        if index == self.frame_index:
-            return
-        if index not in self.frames:
-            art, peak_ratio = self.master_art
-            factor = peak_ratio * (.4 + .6 * index / 90)
-            image = art.resize((max(1, round(art.width * factor)), max(1, round(art.height * factor))),
-                               Image.Resampling.LANCZOS)
-            if self.keyed:
-                image.putalpha(image.getchannel('A').point(lambda alpha: 255 if alpha >= 112 else 0))
-            self.frames[index] = ImageTk.PhotoImage(image, master=self.canvas)
-        self.canvas.itemconfigure(self.heartbeat_item, image=self.frames[index])
-        self.frame_index = index
+        pulse = .11 * (1 - math.cos(2 * math.pi * elapsed / 2.8))
+        rgb = (round(value + (255 - value) * pulse) for value in self.ink)
+        self.canvas.itemconfigure(self.caption_item, fill='#{:02x}{:02x}{:02x}'.format(*rgb))
 
     def _tick(self):
-        self._paint_heartbeat()
-        self.job = self.after(16, self._tick)
+        self._update_color()
+        self.job = self.after(25, self._tick)
 
 
 def apply_parchment_theme(root):
@@ -1978,9 +1925,6 @@ class VisualAlert:
         image = self._resolve_image(settings)
         goal_result = settings.get('imagen_visual') == str(BASE / GOAL_PORTRAIT)
         achieved = settings.get('objetivo_cumplido', True)
-        keyed_goal = goal_result and os.name == 'nt'
-        if keyed_goal:
-            background = HUD_KEY_COLOR
         corner = settings.get('visual_esquina', 'inferior_derecha')
         if settings.get('visual_posicion_libre', False):
             left_alert = float(settings.get('visual_pos_x', 80)) < 50
@@ -1991,12 +1935,7 @@ class VisualAlert:
             if bounds:
                 image = image.crop(bounds)
             width = round(size * .88 * math.sqrt(2)) if left_alert else size
-            columns = 3 if achieved else 2
-            rail = max(8, round(11 * border / PANEL_BORDER))
-            # Ancho del marco anterior multiplicado por su nueva proporción.
-            max_width = max(columns, screenw - 2 * (margin + rail + 22))
-            wide_width = min(columns * (width + 2 * rail) - 2 * rail, max_width)
-            width = min(width, wide_width // columns)
+            width = min(width, max(1, screenw - 2 * (margin + 22 + border + 16)))
             art = image.resize((width, max(1, round(width * image.height / image.width))),
                                Image.Resampling.LANCZOS)
         elif left_alert:
@@ -2025,36 +1964,32 @@ class VisualAlert:
         opacity = max(30, min(100, int(settings.get('visual_opacidad', 95))))/100
         if os.name != 'nt':
             win.wm_attributes('-alpha', opacity)
-        outer = parchment_panel(win, vine_row=0, appearance=settings, edge_to_edge=goal_result,
-                         transparent_interior=keyed_goal,
+        outer = parchment_panel(win, vine_row=0, appearance=settings,
                          bd=0, highlightthickness=border,
                          highlightbackground=GOLD_BORDER, highlightcolor=GOLD_BORDER)
         outer.pack(fill='both', expand=True)
         outer = outer.content
         if goal_result:
-            row = hud_group(outer, bg=background, width=wide_width, height=art.height)
-            row.pack()
-            row.pack_propagate(False)
-            HudLabel(row, art=art, keyed_art=keyed_goal, bg=background,
-                     bd=0, padx=0, pady=0).pack(side='left')
-            padding = round(12 * scale / 100)
+            padding = round(10 * scale / 100)
+            banner_options = dict(bg=background, padx=padding, pady=round(8 * scale / 100),
+                                  wraplength=max(1, art.width - 2 * padding - 4), justify='center')
             if achieved:
-                headline = HeartbeatHudLabel(row, text=settings.get('texto_objetivo', GOAL_BANNERS[0]),
-                                             size=scaled_font(21, scale), color=text_color,
-                                             keyed=keyed_goal, bg=background, padx=padding)
+                headline = SoftPulseHudLabel(outer, text=settings.get('texto_objetivo', GOAL_BANNERS[0]),
+                                             size=scaled_font(17, scale), color=text_color, **banner_options)
             else:
-                headline = HudLabel(row, text=MISSED_GOAL_BANNER, fg=MISSED_GOAL_COLOR,
-                                    bg=background, font=('Segoe UI', scaled_font(15, scale), 'bold'),
-                                    wraplength=max(1, wide_width - art.width - 2 * padding - 4), padx=padding)
-            headline.pack(side='left', fill='both', expand=True)
+                headline = HudLabel(outer, text=MISSED_GOAL_BANNER, fg=MISSED_GOAL_COLOR,
+                                    font=('Segoe UI', scaled_font(15, scale), 'bold'), **banner_options)
+            headline.pack(fill='x')
         else:
-            PulsingHudLabel(outer, text='CREA ALDEANOS !!', size=scaled_font(13, scale),
-                            color=text_color, bg=background, padx=round(15 * scale / 100),
+            padding = round(15 * scale / 100)
+            SoftPulseHudLabel(outer, text='CREA ALDEANOS !!', size=scaled_font(13, scale),
+                            color=text_color, bg=background, padx=padding,
+                            wraplength=max(1, art.width - 2 * padding - 4), justify='center',
                             pady=round(8 * scale / 100)).pack(fill='x')
-            portrait = HudLabel(outer, art=art, bg=background, borderwidth=0,
-                                highlightthickness=0, padx=0, pady=0)
-            portrait.pack(padx=round((2 if left_alert else 8) * scale / 100),
-                          pady=(round(4 * scale / 100), 0))
+        portrait = HudLabel(outer, art=art, bg=background, borderwidth=0,
+                            highlightthickness=0, padx=0, pady=0)
+        portrait.pack(padx=round((2 if left_alert else 8) * scale / 100),
+                      pady=(round(4 * scale / 100), 0))
         show_metrics = settings.get('mostrar_perdidas', True)
         if show_metrics:
             panel = hud_group(outer, bg=background, padx=round((4 if left_alert else 12)*scale/100),
@@ -2555,26 +2490,28 @@ class GameControlDock(VisualAlert):
                        highlightbackground=GOLD_BORDER, highlightcolor=GOLD_BORDER, highlightthickness=PANEL_BORDER)
         panel.pack(fill='both',expand=True)
         panel = panel.content
+        button_size = max(22, round(41 * scale / 100))
+        button_style = dict(bg=background, fg=text_color, activeforeground=text_color,
+                            activebackground=background, width=button_size, height=button_size,
+                            padx=0, pady=0, bd=2, highlightthickness=0, anchor='center')
         self.visibility_buttons = {}
         for key, arrow in (('visual', '←'), ('total', '↑'), ('ages', '→')):
             button = tk.Button(panel, text=arrow,
                                command=lambda item=key: self.visibility_callback(item),
-                               bg=background, fg=text_color, activeforeground=text_color,
-                               font=('Segoe UI', scaled_font(12, scale), 'bold'),
-                               activebackground=background, width=3)
+                               **button_style)
             button.pack(side='left', padx=2, fill='y')
             self.visibility_buttons[key] = button
-            self.paint_direction_arrow(button, scale, text_color, key)
+            self.paint_direction_arrow(button, button_size, text_color, key)
         self.speaker_icons = tuple(self.speaker_icon(scale, text_color, muted)
                                    for muted in (False, True))
         self.mute_button = tk.Button(panel, image=self.speaker_icons[0],
-                                     command=self.mute_callback, bg=background,
-                                     activebackground=background, padx=5)
-        self.mute_button.pack(side='left', padx=(6, 2), fill='y')
+                                     command=self.mute_callback, **button_style)
+        self.mute_button.pack(side='left', padx=2, fill='y')
+        self.pause_icon_base = tk.PhotoImage(master=panel, width=1, height=1)
         self.pause_button = tk.Button(panel, text='Ⅱ', command=self.pause_callback,
-                                      bg=background, fg=text_color, activeforeground=text_color,
+                                      image=self.pause_icon_base, compound='center',
                                       font=('Segoe UI', scaled_font(12, scale), 'bold'),
-                                      activebackground=background, width=3)
+                                      **button_style)
         self.pause_button.pack(side='left', padx=2, fill='y')
         win.update_idletasks()
         w,h=win.winfo_reqwidth(),win.winfo_reqheight()
@@ -2634,23 +2571,21 @@ class GameControlDock(VisualAlert):
         return ImageTk.PhotoImage(icon.resize((size, size), Image.Resampling.LANCZOS),
                                  master=self.root)
 
-    def paint_direction_arrow(self, button, scale, color, direction):
-        width = max(26, round(41 * scale / 100))
-        height = max(24, round(31 * scale / 100))
-        button.face = tk.PhotoImage(master=button, width=width, height=height)
-        button.config(image=button.face, width=width, height=height, padx=0, pady=0)
+    def paint_direction_arrow(self, button, size, color, direction):
+        button.face = tk.PhotoImage(master=button, width=size, height=size)
+        button.config(image=button.face)
 
         def render(paper):
-            x, y = (paper.width - width) // 2, (paper.height - height) // 2
-            face = paper.crop((x, y, x + width, y + height))
+            x, y = (paper.width - size) // 2, (paper.height - size) // 2
+            face = paper.crop((x, y, x + size, y + size))
             draw = ImageDraw.Draw(face)
-            cx, cy = width // 2, 2 * height // 3
-            length = max(7, height // 3)
-            stroke = max(2, width // 16)
+            center = size // 2
+            length = max(5, round(size * .24))
+            stroke = max(2, size // 16)
             dx, dy = {'visual': (-1, 0), 'total': (0, -1), 'ages': (1, 0)}[direction]
 
             def point(along, across=0):
-                return cx + along * dx - across * dy, cy + along * dy + across * dx
+                return center + along * dx - across * dy, center + along * dy + across * dx
 
             draw.line((point(-length), point(length)), fill=color, width=stroke)
             draw.line((point(length // 3, -length // 2), point(length),
