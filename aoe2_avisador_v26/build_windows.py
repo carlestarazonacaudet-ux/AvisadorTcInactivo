@@ -38,6 +38,15 @@ def main():
         '--add-data', f'{BASE / "age_shields"};age_shields',
         '--add-data', f'{BASE / "tech_templates"};tech_templates',
         '--add-data', f'{BASE / "aviso_visual.png"};.',
+        '--add-data', f'{BASE / "FishingShipDE.webp"};.',
+        '--add-data', f'{BASE / "sonidos"};sonidos',
+        '--add-data', f'{BASE / "aldeano_azul.png"};.',
+        '--add-data', f'{BASE / "felicitacion_age.png"};.',
+        '--add-data', f'{BASE / "reloj-de-arena.gif"};.',
+        '--add-data', f'{BASE / "esquina_enredadera.png"};.',
+        '--add-data', f'{BASE / "madera_oscura.png"};.',
+        '--add-data', f'{BASE / "madera_rustica.png"};.',
+        '--add-data', f'{BASE / "marco_dorado.png"};.',
         '--add-data', f'{ocr / "tessdata" / "eng.traineddata"};ocr/tessdata',
     ]
     # Algunos instaladores incluyen dependencias nativas en subdirectorios.

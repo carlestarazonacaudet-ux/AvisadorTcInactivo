@@ -2,6 +2,7 @@
 setlocal
 cd /d "%~dp0"
 title Avisador de aldeanos AoE2 DE V26
+if exist ".venv\Scripts\python.exe" goto dependencies
 set "PYTHON_CMD="
 where py >nul 2>nul
 if not errorlevel 1 (
@@ -21,8 +22,12 @@ if not exist ".venv\Scripts\python.exe" (
     %PYTHON_CMD% -m venv .venv
     if errorlevel 1 goto error
 )
+:dependencies
+".venv\Scripts\python.exe" -c "import cv2, mss, numpy, pygame, pytesseract, PIL" >nul 2>nul
+if not errorlevel 1 goto run
 ".venv\Scripts\python.exe" -m pip install --disable-pip-version-check -r requirements.txt
 if errorlevel 1 goto error
+:run
 ".venv\Scripts\python.exe" avisador_v26.py
 if errorlevel 1 goto error
 exit /b 0

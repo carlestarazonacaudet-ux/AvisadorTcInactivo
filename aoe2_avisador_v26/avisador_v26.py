@@ -7,6 +7,7 @@ import copy
 import tempfile
 import json
 import queue
+import random
 import re
 import shutil
 import sys
@@ -14,20 +15,299 @@ import wave
 import math
 import unicodedata
 import difflib
-from tkinter import filedialog
+from tkinter import colorchooser, filedialog
 import subprocess
 import threading
 import time
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
-from PIL import Image, ImageTk
+from tkinter.font import Font
+from PIL import Image, ImageDraw, ImageOps, ImageSequence, ImageTk
 
 import cv2
 import mss
 import numpy as np
 import pygame
 import pytesseract
+
+PARCHMENT = '#EFDFBB'
+PARCHMENT_LIGHT = '#F9EDCF'
+PARCHMENT_PRESSED = '#D8BA7B'
+GOLD_TEXT = '#674408'
+GOLD_ACCENT = '#825910'
+GOLD_BORDER = '#9F7428'
+PANEL_BORDER = 4
+HUD_TRANSPARENT = (1, 2, 3)
+HUD_TEXTURES = {
+    'madera_oscura': ('madera_oscura.png', '#222222'),
+    'madera_rustica': ('madera_rustica.png', '#604733'),
+}
+
+
+def hud_colors(settings):
+    texture = HUD_TEXTURES.get(settings.get('marco_fondo', HUD_APPEARANCE['marco_fondo']))
+    background = texture[1] if texture else settings.get('marco_color_fondo', HUD_APPEARANCE['marco_color_fondo'])
+    return background, settings.get('marco_color_letras', HUD_APPEARANCE['marco_color_letras'])
+
+
+def picture_frame(paper, thickness, style='madera_tallada'):
+    """Conserva las esquinas a inglete y estira solo los cuatro lados."""
+    with Image.open(BASE / 'marco_dorado.png') as asset:
+        frame = asset.convert('RGB')
+    if style == 'madera_dorada':
+        tones = ('#2F1D0E', '#E9C07B', '#946332')
+    else:
+        tones = ('#1B100B', '#B38151', '#593723')
+    frame = ImageOps.colorize(ImageOps.grayscale(frame), *tones)
+    with Image.open(BASE / 'madera_rustica.png') as wood:
+        grain = ImageOps.fit(wood.convert('L'), frame.size, Image.Resampling.LANCZOS)
+    grain = ImageOps.colorize(grain, '#28180E', '#C3925F')
+    frame = Image.blend(frame, grain, 0.22)
+    xs = (16, 46, 369, 399)
+    ys = (15, 44, 337, 366)
+    width, height = paper.size
+    edge = min(thickness, width // 2, height // 2)
+    dx = (0, edge, width - edge, width)
+    dy = (0, edge, height - edge, height)
+    for row in range(3):
+        for col in range(3):
+            if row == col == 1:
+                continue
+            size = dx[col + 1] - dx[col], dy[row + 1] - dy[row]
+            if min(size) > 0:
+                tile = frame.crop((xs[col], ys[row], xs[col + 1], ys[row + 1]))
+                paper.paste(tile.resize(size, Image.Resampling.LANCZOS), (dx[col], dy[row]))
+
+
+
+def parchment_panel(parent, *, vine_row=None, appearance=None, **options):
+    """Marco dorado con grano de papel y bordes envejecidos."""
+    border = int(options.get('highlightthickness', 0))
+    vines = ()
+    if vine_row is not None:
+        with Image.open(BASE / 'esquina_enredadera.png') as asset:
+            tile_width, tile_height = asset.width // 2, asset.height // 5
+            top = vine_row * tile_height
+            vines = tuple(asset.crop((x, top, x + tile_width, top + tile_height)).convert('RGBA')
+                          for x in (0, tile_width))
+        padding = {axis: options.pop(axis, 0) for axis in ('padx', 'pady')}
+    background = hud_colors(appearance)[0] if appearance is not None else PARCHMENT
+    texture = None
+    if appearance is not None:
+        texture_info = HUD_TEXTURES.get(appearance.get('marco_fondo', HUD_APPEARANCE['marco_fondo']))
+        if texture_info:
+            with Image.open(BASE / texture_info[0]) as asset:
+                texture = asset.convert('RGB')
+    frame = tk.Frame(parent, bg=background, **options)
+    overhang = (22, 18) if vines and appearance is not None and os.name == 'nt' else (0, 0)
+    frame.hud_overhang = overhang != (0, 0)
+    backdrop = tk.Label(frame, bd=0, highlightthickness=0, bg=background)
+    inset = 0 if vines else border + int(frame.cget('borderwidth'))
+    backdrop.place(x=inset, y=inset, relwidth=1, relheight=1,
+                   width=-2 * inset, height=-2 * inset, bordermode='ignore')
+    backdrop.lower()
+    if vines:
+        frame.hud_painters = {}
+        frame.content = hud_group(frame, bg=background, **padding) if appearance is not None else parchment_panel(frame, **padding)
+        top_gap = round({1: 17, 2: 18, 3: 10}.get(vine_row, 30) * border / PANEL_BORDER)
+        frame.content.pack(fill='both', expand=True, padx=7 + overhang[0],
+                           pady=(top_gap + overhang[1], 7 + overhang[1]))
+
+    def draw_paper(event):
+        if event.width < 2 or event.height < 2:
+            return
+        width, height = event.width - 2 * inset, event.height - 2 * inset
+        if width < 2 or height < 2:
+            return
+        margin_x, margin_y = overhang
+        inner_size = width - 2 * margin_x, height - 2 * margin_y
+        if min(inner_size) < 2:
+            return
+        if texture is not None:
+            paper = ImageOps.fit(texture, inner_size, Image.Resampling.LANCZOS)
+        elif appearance is not None:
+            paper = Image.new('RGB', inner_size, background)
+        else:
+            rng = np.random.default_rng(26)
+            clouds = Image.fromarray(rng.integers(70, 186, (8, 12), dtype=np.uint8))
+            grain = np.asarray(clouds.resize((width, height), Image.Resampling.BICUBIC), dtype=float)
+            grain = (grain - 128) * 0.20 + rng.normal(0, 1.7, grain.shape)
+            x = np.minimum(np.arange(width), np.arange(width)[::-1])
+            y = np.minimum(np.arange(height), np.arange(height)[::-1])
+            shade = 16 * np.exp(-np.minimum(x[None, :], y[:, None]) / 13)
+            pixels = np.array([239, 223, 187]) + (grain - shade)[..., None]
+            paper = Image.fromarray(np.clip(pixels, 0, 255).astype(np.uint8))
+        if vines:
+            style = (appearance or HUD_APPEARANCE).get('marco_estilo', HUD_APPEARANCE['marco_estilo'])
+            picture_frame(paper, max(8, round(11 * border / PANEL_BORDER)), style)
+            if frame.hud_overhang:
+                interior = paper
+                paper = Image.new('RGB', (width, height), HUD_TRANSPARENT)
+                paper.paste(interior, overhang)
+            vine_width = max(1, min(round(146 * border / PANEL_BORDER), width * 47 // 100))
+            vine_height = min(height, max(1, round(vine_width * tile_height / tile_width)))
+            for vine, x in zip(vines, (0, width - vine_width)):
+                ornament = vine.resize((vine_width, vine_height), Image.Resampling.LANCZOS)
+                if frame.hud_overhang and os.name == 'nt':
+                    # No mezclar con el color clave: evita un halo en el borde exterior.
+                    mask = ornament.getchannel('A').point(lambda alpha: 255 if alpha >= 112 else 0)
+                else:
+                    mask = ornament.getchannel('A')
+                paper.paste(ornament, (x, 0), mask)
+        frame.paper_surface = paper
+        backdrop.paper = ImageTk.PhotoImage(paper, master=frame)
+        backdrop.configure(image=backdrop.paper)
+        if vines and appearance is not None:
+            for paint in tuple(frame.hud_painters.values()):
+                paint()
+
+    frame.bind('<Configure>', draw_paper, add='+')
+    return frame
+
+
+def paint_on_hud(widget, render):
+    """Pinta sobre el recorte exacto del fondo situado debajo del widget."""
+    panel = widget.master
+    while not hasattr(panel, 'hud_painters'):
+        if panel.master is None or isinstance(panel, tk.Toplevel):
+            return
+        panel = panel.master
+
+    def paint(_event=None):
+        paper = getattr(panel, 'paper_surface', None)
+        width, height = widget.winfo_width(), widget.winfo_height()
+        if paper is None or width < 2 or height < 2:
+            return
+        x = widget.winfo_rootx() - panel.winfo_rootx()
+        y = widget.winfo_rooty() - panel.winfo_rooty()
+        render(paper.crop((x, y, x + width, y + height)))
+
+    panel.hud_painters[widget] = paint
+    widget.bind('<Configure>', paint, add='+')
+    widget.bind('<Map>', paint, add='+')
+    widget.bind('<Destroy>', lambda _event: panel.hud_painters.pop(widget, None), add='+')
+    return paint
+
+
+def hud_group(parent, **options):
+    group = tk.Frame(parent, **options)
+    backing = tk.Label(group, bd=0, highlightthickness=0)
+    backing.place(x=0, y=0, relwidth=1, relheight=1, bordermode='ignore')
+    backing.lower()
+
+    def render(paper):
+        backing.photo = ImageTk.PhotoImage(paper, master=backing)
+        backing.configure(image=backing.photo)
+
+    paint_on_hud(group, render)
+    return group
+
+
+class HudLabel(tk.Label):
+    """Etiqueta con fondo continuo e imagen RGBA opcional."""
+    def __init__(self, parent, *, art=None, **options):
+        self.art = art
+        self._paint = None
+        if art is not None:
+            self._size_image = tk.PhotoImage(master=parent, width=art.width, height=art.height)
+            options['image'] = self._size_image
+        super().__init__(parent, **options)
+        self.canvas = tk.Canvas(self, bd=0, highlightthickness=0, takefocus=0)
+        self.canvas.place(x=0, y=0, relwidth=1, relheight=1, bordermode='ignore')
+        self._paint = paint_on_hud(self, self._render)
+
+    def _render(self, paper):
+        width, height = paper.size
+        if self.art is not None:
+            x, y = (width - self.art.width) // 2, (height - self.art.height) // 2
+            paper.paste(self.art, (x, y), self.art)
+        self.canvas.photo = ImageTk.PhotoImage(paper, master=self.canvas)
+        self.canvas.delete('all')
+        self.canvas.create_image(0, 0, image=self.canvas.photo, anchor='nw')
+        anchor = self.cget('anchor')
+        left = anchor.endswith('w')
+        right = anchor.endswith('e') and anchor != 'center'
+        x = 2 if left else width - 2 if right else width // 2
+        self.canvas.create_text(x, height // 2, text=self.cget('text'), fill=self.cget('fg'),
+                                font=self.cget('font'), tags='caption',
+                                width=self.winfo_pixels(self.cget('wraplength')),
+                                anchor='w' if left else 'e' if right else 'center')
+
+    def configure(self, cnf=None, **options):
+        result = super().configure(cnf, **options)
+        if (options or isinstance(cnf, dict)) and self._paint is not None:
+            self._paint()
+        return result
+
+    config = configure
+
+
+class PulsingHudLabel(HudLabel):
+    def __init__(self, parent, *, size, color, **options):
+        self.base_size = size
+        self.peak_size = round(size * 1.5)
+        self.ink = color
+        self.job = None
+        self.start_time = 0
+        font = Font(root=parent, family='Segoe UI', size=size, weight='bold')
+        self.pulse_font = font
+        super().__init__(parent, fg=color, font=('Segoe UI', self.peak_size, 'bold'),
+                         **options)
+        self.bind('<Map>', self._start, add='+')
+        self.bind('<Unmap>', self._stop, add='+')
+        self.bind('<Destroy>', self._stop, add='+')
+
+    def _render(self, paper):
+        super()._render(paper)
+        self._apply_pulse()
+
+    def _start(self, _event):
+        if self.job is None:
+            self.start_time = time.monotonic()
+            self._tick()
+
+    def _stop(self, _event):
+        if self.job is not None:
+            self.after_cancel(self.job)
+            self.job = None
+
+    def _apply_pulse(self):
+        elapsed = time.monotonic() - self.start_time if self.start_time else 0
+        pulse = (1 - math.cos(2 * math.pi * elapsed / 1.15)) / 2
+        self.pulse_font.configure(size=round(self.base_size + (self.peak_size - self.base_size) * pulse))
+        rgb = (round(value / 257 + (255 - value / 257) * .65 * pulse)
+               for value in self.winfo_rgb(self.ink))
+        shade = '#{:02x}{:02x}{:02x}'.format(*rgb)
+        self.canvas.itemconfigure('caption', font=self.pulse_font, fill=shade)
+
+    def _tick(self):
+        self._apply_pulse()
+        self.job = self.after(40, self._tick)
+
+
+def apply_parchment_theme(root):
+    root.configure(bg=PARCHMENT)
+    style = ttk.Style(root)
+    if 'clam' in style.theme_names():
+        style.theme_use('clam')
+    style.configure('.', background=PARCHMENT, foreground=GOLD_TEXT,
+                    bordercolor=GOLD_BORDER, lightcolor=GOLD_BORDER, darkcolor=GOLD_BORDER,
+                    fieldbackground=PARCHMENT_LIGHT, selectforeground=GOLD_TEXT,
+                    selectbackground=PARCHMENT_PRESSED, troughcolor=PARCHMENT_LIGHT,
+                    insertcolor=GOLD_TEXT, arrowcolor=GOLD_TEXT, focuscolor=GOLD_ACCENT)
+    style.configure('TLabelframe', relief='solid', borderwidth=2)
+    style.configure('TNotebook', borderwidth=2)
+    style.map('TNotebook.Tab', background=[('selected', PARCHMENT_LIGHT)])
+    style.map('TButton', background=[('pressed', PARCHMENT_PRESSED),
+                                     ('active', PARCHMENT_LIGHT)],
+              foreground=[('disabled', GOLD_ACCENT)])
+    style.map('TCombobox', fieldbackground=[('readonly', PARCHMENT_LIGHT)],
+              foreground=[('readonly', GOLD_TEXT)])
+    for control in ('TCheckbutton', 'TRadiobutton'):
+        style.map(control, indicatorcolor=[('selected', GOLD_BORDER),
+                                           ('!selected', PARCHMENT_LIGHT)])
+
 
 BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 PROGRAM_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
@@ -43,6 +323,10 @@ LEGACY_TEMPLATE = PROGRAM_DIR / 'plantilla_aldeano_v4.png'
 PAUSE_TEMPLATE = DATA_DIR / 'plantilla_pausa_v15.png'
 RUNNING_TEMPLATE = DATA_DIR / 'plantilla_reanudada_v15.png'
 DEFAULTS = {
+    'marco_fondo': 'madera_oscura',
+    'marco_color_fondo': '#26231E',
+    'marco_color_letras': '#F0CE75',
+    'marco_estilo': 'madera_tallada',
     'modo': 'global', 'espera': 3.0, 'repeticion': 6.0, 'intervalo': 0.18,
     'umbral': 0.58, 'monitor': 1, 'zonas': [], 'solo_juego_activo': True,
     'voz': 'Crea aldeanos', 'escalas': [0.85, 0.95, 1.0, 1.05, 1.15],
@@ -69,7 +353,26 @@ DEFAULTS = {
     'controles_pos_x': 70, 'controles_pos_y': 3, 'controles_opacidad': 96,
     'rojo_activo': True, 'zona_rojo': None, 'rojo_ratio_ref': 0.0,
     'tecnologias_activo': True, 'mostrar_aviso_visual': True,
+    'objetivos_idle': {},
 }
+HUD_APPEARANCE = {key: value for key, value in DEFAULTS.items() if key.startswith('marco_')}
+BUILTIN_ALERTS = {'no_puede_ser': ('No puede ser', 'no puede ser.mp3'),
+                  'espabila': ('Espabila', 'espabila.mp3')}
+GOAL_PORTRAIT = 'felicitacion_age.png'
+GOAL_SOUNDS = ('nacho partida de nivel.mp3', 'nacho digno de top player.mp3')
+GOAL_BANNERS = (
+    'MVP !!',
+    'Ni yo lo haría mejor',
+    'De clase mundial',
+    'Tu ELO subirá como la espuma',
+    'FU !!',
+    'Eres el Vaipa',
+    'Ni Jerardo',
+)
+MISSED_GOAL_BANNER = 'Mi abuelita se las arregla mucho mejor...'
+MISSED_GOAL_COLOR = '#FF6565'
+MISSED_GOAL_SOUND = 'abuelit.mp3'
+GOAL_DURATION_MS = 7000
 
 
 def audio_repeat_due(game_clock, previous_alert_clock, repeat_seconds):
@@ -246,7 +549,62 @@ def prepared_queue_templates(templates, scales):
     return items
 
 
-def match_score(region, templates, scales, return_box=False):
+def mask_excluded_matches(response, width, height, excluded_boxes):
+    """No puntuar candidatos cuyo centro cae dentro de un icono descartado."""
+    for x, y, w, h in excluded_boxes:
+        x1, y1 = max(0, x - width // 2), max(0, y - height // 2)
+        x2, y2 = max(0, x + w - width // 2), max(0, y + h - height // 2)
+        response[y1:y2, x1:x2] = -1
+
+
+def load_fishing_ship_models(scales):
+    with Image.open(BASE / 'FishingShipDE.webp') as image:
+        icon = cv2.cvtColor(np.asarray(image.convert('RGB')), cv2.COLOR_RGB2GRAY)
+    # Los originales se normalizan a 46 px, como los de aldeanos y tecnologías.
+    sizes = sorted({round(46 * scale) for scale in (*scales, .70, .78, .90, 1.10, 1.23, 1.32, 1.46)})
+    models = []
+    for size in sizes:
+        scaled = cv2.resize(icon, (size, size), interpolation=cv2.INTER_AREA)
+        edges = cv2.Sobel(scaled, cv2.CV_32F, 0, 1, ksize=3)[2:-2, 2:-2]
+        variants = [edges]
+        for progress in (.4, .65, .84):
+            covered = round(progress * edges.shape[1])
+            for columns in (slice(0, covered), slice(-covered, None)):
+                tinted = edges.copy()
+                tinted[:, columns] *= .28
+                variants.append(tinted)
+        models.append((size, variants))
+    return models
+
+
+def fishing_ship_boxes(region, models):
+    """Localiza pesqueros por su silueta, aun con velo de progreso o bloqueo."""
+    gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+    # La derivada vertical elimina el cambio de tono uniforme y evita los
+    # bordes verticales que introduce una barra de progreso parcial.
+    edges = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    green = green_progress_visible(region, min_fraction=.20)
+    boxes = []
+    for size, variants in models:
+        extent = size - 4
+        if extent > min(gray.shape):
+            continue
+        response = cv2.matchTemplate(edges, variants[0], cv2.TM_CCOEFF_NORMED)
+        if green:
+            for model in variants[1:]:
+                result = cv2.matchTemplate(edges, model, cv2.TM_CCOEFF_NORMED)
+                np.maximum(response, result, out=response)
+        while True:
+            _, score, _, (x, y) = cv2.minMaxLoc(response)
+            if not np.isfinite(score) or score < .72:
+                break
+            box = (x - 2, y - 2, size, size)
+            boxes.append(box)
+            mask_excluded_matches(response, extent, extent, (box,))
+    return boxes
+
+
+def match_score(region, templates, scales, return_box=False, excluded_boxes=()):
     """Compara múltiples apariencias de aldeanos; devuelve (score, modelo, incierto).
 
     Desliza un modelo por la zona global. Si la región tiene el tamaño de un
@@ -272,10 +630,14 @@ def match_score(region, templates, scales, return_box=False):
             match = cv2.matchTemplate(reg_green.astype(np.uint8), template_green.astype(np.uint8), cv2.TM_CCOEFF_NORMED)
         else:
             match = cv2.matchTemplate(reg_blur, template_gray, cv2.TM_CCOEFF_NORMED)
+        if excluded_boxes:
+            mask_excluded_matches(match, tw, th, excluded_boxes)
         k = min(5, match.size)
         flat = match.ravel()
         top = np.argpartition(flat, -k)[-k:]
         for idx in top:
+            if flat[idx] <= -1:
+                continue
             y, x = np.unravel_index(int(idx), match.shape)
             candidates.append((float(flat[idx]), name, scaled, x, y))
     if not candidates:
@@ -363,7 +725,8 @@ def green_progress_visible(region, min_fraction=.55):
     return bool(np.max(coverage) >= min_fraction)
 
 
-def match_green_icon_structure(region, villagers, technologies, scales, threshold=.68):
+def match_green_icon_structure(region, villagers, technologies, scales, threshold=.68,
+                               excluded_boxes=()):
     """Reconoce el ICONO DEBAJO del progreso verde (no el terreno).
 
     Un velo verde uniforme sobre un icono translúcido conserva la estructura
@@ -389,6 +752,8 @@ def match_green_icon_structure(region, villagers, technologies, scales, threshol
             if ref_gray.std()<4:
                 continue
             result=cv2.matchTemplate(gray,ref_gray,cv2.TM_CCOEFF_NORMED)
+            if excluded_boxes:
+                mask_excluded_matches(result, tw, th, excluded_boxes)
             _, score, _, (x,y)=cv2.minMaxLoc(result)
             if score < threshold or not np.isfinite(score):
                 continue
@@ -403,7 +768,7 @@ def match_green_icon_structure(region, villagers, technologies, scales, threshol
 
 
 def classify_queue_region(region, villagers, technologies, scales, village_threshold=.58,
-                          technology_threshold=.60):
+                          technology_threshold=.60, fishing_models=()):
     """Devuelve (ocupado, estado, puntuación) en la cola calibrada.
 
     Cualquier icono SIN velo rojo es actividad válida. Iconos cubiertos de
@@ -415,13 +780,15 @@ def classify_queue_region(region, villagers, technologies, scales, village_thres
     if region.size == 0:
         return False, 'sin imagen', 0.
     height,width = region.shape[:2]
+    excluded = fishing_ship_boxes(region, fishing_models) if fishing_models else ()
     if max(height,width) <= 100 and red_overlay_on_icon(region):
         return False, 'bloqueado rojo', 1.
 
     # Nunca declarar actividad por verde SIN confirmar un icono: el césped
     # del mapa activa esa condición con mucha frecuencia. El segundo paso
     # comprueba que debajo haya una de las ilustraciones suministradas.
-    green_match = match_green_icon_structure(region,villagers,technologies,scales)
+    green_match = match_green_icon_structure(region, villagers, technologies, scales,
+                                            excluded_boxes=excluded)
     if green_match is not None:
         score, kind, name = green_match
         return True, f'{kind} con progreso verde ({name})', score
@@ -431,8 +798,10 @@ def classify_queue_region(region, villagers, technologies, scales, village_thres
     last_score=0.
     passes = 4 if max(width,height)>100 else 1
     for _ in range(passes):
-        v_score,v_name,_,v_rect = match_score(working,villagers,scales,return_box=True)
-        t_score,t_name,_,t_rect = (match_score(working,technologies,scales,return_box=True)
+        v_score,v_name,_,v_rect = match_score(working, villagers, scales, return_box=True,
+                                             excluded_boxes=excluded)
+        t_score,t_name,_,t_rect = (match_score(working, technologies, scales, return_box=True,
+                                              excluded_boxes=excluded)
                                    if technologies else (0.,'',False,None))
         last_score=max(last_score,v_score,t_score)
         outcomes=[]
@@ -462,6 +831,8 @@ def classify_queue_region(region, villagers, technologies, scales, village_thres
             working[y:y+hh,x:x+ww] = 0
     if last_red is not None:
         return last_red[:3]
+    if excluded:
+        return False, 'pesquero excluido de la cola del TC', last_score
     return False, 'cola vacía / no reconocida', last_score
 
 
@@ -692,6 +1063,8 @@ class SoundEngine:
         self.mixer_ok = False
         try:
             pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+            self.celebration_channel = pygame.mixer.Channel(0)
+            self.beep_channel = pygame.mixer.Channel(1)
             self.mixer_ok = True
         except Exception as exc:
             self.log('No se pudo iniciar el audio: ' + str(exc))
@@ -704,16 +1077,27 @@ class SoundEngine:
         except queue.Full:
             pass
 
-    def stop_sound(self):
+    def stop_sound(self, *, include_celebration=False):
         with self.lock:
             if self.mixer_ok:
                 pygame.mixer.music.stop()
-                pygame.mixer.stop()
+                self.beep_channel.stop()
+                if include_celebration:
+                    self.celebration_channel.stop()
         while True:
             try:
                 self.jobs.get_nowait()
             except queue.Empty:
                 break
+
+    def play_celebration(self, filename, volume):
+        if not self.mixer_ok:
+            return
+        with self.lock:
+            self.stop_sound()
+            clip = pygame.mixer.Sound(str(BASE / 'sonidos' / filename))
+            self.celebration_channel.set_volume(max(0, min(100, int(volume))) / 100)
+            self.celebration_channel.play(clip)
 
     def loop(self):
         while self.running:
@@ -734,8 +1118,11 @@ class SoundEngine:
             return
         mode = setting.get('sonido', 'voz')
         volume = max(0, min(100, int(setting.get('volumen', 70)))) / 100.0
-        if mode == 'archivo':
-            path = Path(setting.get('archivo_sonido', ''))
+        if mode == 'archivo' or mode in BUILTIN_ALERTS:
+            if mode in BUILTIN_ALERTS:
+                path = BASE / 'sonidos' / BUILTIN_ALERTS[mode][1]
+            else:
+                path = Path(setting.get('archivo_sonido', ''))
             if not path.is_file() or path.suffix.lower() not in ('.mp3', '.wav'):
                 self.log('El MP3/WAV elegido no existe o no tiene formato compatible.')
                 return
@@ -748,9 +1135,12 @@ class SoundEngine:
 
     def _music(self, path, volume):
         with self.lock:
+            if self.celebration_channel.get_busy():
+                return False
             pygame.mixer.music.load(path)
             pygame.mixer.music.set_volume(volume)
             pygame.mixer.music.play()
+            return True
 
     def _beep(self, count, volume):
         sample_rate = 44100
@@ -769,8 +1159,8 @@ class SoundEngine:
         sound = pygame.sndarray.make_sound(np.ascontiguousarray(stereo))
         sound.set_volume(volume)
         with self.lock:
-            pygame.mixer.stop()
-            sound.play()
+            if not self.celebration_channel.get_busy():
+                self.beep_channel.play(sound)
 
     def _voice(self, phrase, volume):
         # System.Speech genera un WAV temporal; mixer aplica el volumen.
@@ -787,7 +1177,8 @@ class SoundEngine:
             subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',script],
                            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                            timeout=20, creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-            self._music(str(dest), volume)
+            if not self._music(str(dest), volume):
+                return
             # Wait for completion so temporary audio is not removed mid-play.
             deadline = time.monotonic()+12
             while pygame.mixer.music.get_busy() and time.monotonic()<deadline and self.running:
@@ -796,7 +1187,7 @@ class SoundEngine:
 
     def close(self):
         self.running = False
-        self.stop_sound()
+        self.stop_sound(include_celebration=True)
         try:
             self.jobs.put_nowait(None)
         except queue.Full:
@@ -1369,13 +1760,13 @@ class ScrollableTab(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
         self.canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0,
-                                takefocus=0)
+                                takefocus=0, bg=PARCHMENT)
         self.scrollbar = ttk.Scrollbar(self, orient='vertical',
                                       command=self.canvas.yview)
         self.scrollbar.pack(side='right', fill='y')
         self.canvas.pack(side='left', fill='both', expand=True)
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        self.content = ttk.Frame(self.canvas, padding=(10, 10, 10, 14))
+        self.content = parchment_panel(self.canvas, padx=10, pady=12)
         self.canvas_window = self.canvas.create_window(
             (0, 0), window=self.content, anchor='nw')
         self.content.bind('<Configure>', self._refresh_scrollregion)
@@ -1407,8 +1798,8 @@ class VisualAlert:
         self.root = root
         self.log = log
         self.window = None
-        self._photo = None
         self._settings_key = None
+        self._appearance_key = None
         self._visible = False
         self.time_label = None
         self.loss_label = None
@@ -1468,6 +1859,8 @@ class VisualAlert:
             return Image.open(BASE / 'aviso_visual.png').convert('RGBA')
 
     def _build(self, settings):
+        background, text_color = hud_colors(settings)
+        self.text_color = text_color
         self.hide()
         if self.window is not None:
             self.window.destroy()
@@ -1478,46 +1871,87 @@ class VisualAlert:
             size = max(240, size)
         size = max(50, round(size * scale / 100))
         image = self._resolve_image(settings)
-        image.thumbnail((size, size), Image.Resampling.LANCZOS)
-        canvas = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-        canvas.alpha_composite(image, ((size-image.width)//2,(size-image.height)//2))
-        self._photo = ImageTk.PhotoImage(canvas)
+        corner = settings.get('visual_esquina', 'inferior_derecha')
+        if settings.get('visual_posicion_libre', False):
+            left_alert = float(settings.get('visual_pos_x', 80)) < 50
+        else:
+            left_alert = corner.endswith('izquierda')
+        if left_alert:
+            if not settings.get('imagen_visual', '').strip():
+                with Image.open(BASE / 'aldeano_azul.png') as portrait:
+                    image = portrait.convert('RGBA')
+            # Usar toda la anchura útil y ceder espacio vertical a la imagen.
+            # Recortar solo el margen transparente, sin deformar el dibujo.
+            bounds = image.getbbox()
+            if bounds:
+                image = image.crop(bounds)
+            image_width = round(size * 0.88 * math.sqrt(2))
+            ratio = min(image_width / image.width, size * math.sqrt(2) / image.height)
+            image = image.resize((max(1, round(image.width * ratio)),
+                                  max(1, round(image.height * ratio))), Image.Resampling.LANCZOS)
+            art = image
+        else:
+            image.thumbnail((size, size), Image.Resampling.LANCZOS)
+            art = Image.new('RGBA', (size, size))
+            art.alpha_composite(image, ((size-image.width)//2,(size-image.height)//2))
         win = tk.Toplevel(self.root)
         win.withdraw()
         win.overrideredirect(True)
         win.attributes('-topmost', True)
-        # Fondo opaco: evita desaparecer con transparentcolor + alpha
-        # en ciertas GPU y compositores de Windows.
-        win.configure(bg='#101723')
+        win.configure(bg=background)
         opacity = max(30, min(100, int(settings.get('visual_opacidad', 95))))/100
-        try:
+        if os.name != 'nt':
             win.wm_attributes('-alpha', opacity)
-        except tk.TclError:
-            pass
-        outer = tk.Frame(win, bg='#101723', bd=0, highlightthickness=max(1,round(2*scale/100)),
-                         highlightbackground='#E4A93B')
+        outer = parchment_panel(win, vine_row=0, appearance=settings, bd=0, highlightthickness=max(2, round(PANEL_BORDER * scale / 100)),
+                         highlightbackground=GOLD_BORDER, highlightcolor=GOLD_BORDER)
         outer.pack(fill='both', expand=True)
-        tk.Label(outer, text='!  CENTRO URBANO IDLE', font=('Segoe UI', scaled_font(13,scale), 'bold'),
-                 fg='#FFFFFF', bg='#B92526', padx=round(15*scale/100), pady=round(8*scale/100)).pack(fill='x')
-        tk.Label(outer, image=self._photo, bg='#101723', borderwidth=0,
-                 highlightthickness=0).pack(padx=round(8*scale/100), pady=(round(4*scale/100), 0))
+        outer = outer.content
+        if settings.get('imagen_visual') == str(BASE / GOAL_PORTRAIT):
+            banner = dict(bg=background, wraplength=max(140, art.width),
+                          padx=round(10 * scale / 100), pady=round(8 * scale / 100))
+            if settings.get('objetivo_cumplido', True):
+                PulsingHudLabel(outer, text=settings.get('texto_objetivo', GOAL_BANNERS[0]),
+                                size=scaled_font(15, scale), color=text_color, **banner).pack(fill='x')
+            else:
+                HudLabel(outer, text=MISSED_GOAL_BANNER, fg=MISSED_GOAL_COLOR,
+                         font=('Segoe UI', scaled_font(15, scale), 'bold'), **banner).pack(fill='x')
+        else:
+            PulsingHudLabel(outer, text='CREA ALDEANOS !!', size=scaled_font(13, scale),
+                            color=text_color, bg=background, padx=round(15 * scale / 100),
+                            pady=round(8 * scale / 100)).pack(fill='x')
+        HudLabel(outer, art=art, bg=background, borderwidth=0,
+                 highlightthickness=0).pack(padx=round((2 if left_alert else 8)*scale/100),
+                                           pady=(round(4*scale/100), 0))
         show_metrics = settings.get('mostrar_perdidas', True)
         if show_metrics:
-            panel = tk.Frame(outer, bg='#101723', padx=round(12*scale/100), pady=round(6*scale/100))
+            panel = hud_group(outer, bg=background, padx=round((4 if left_alert else 12)*scale/100),
+                             pady=round((2 if left_alert else 6)*scale/100))
             panel.pack(fill='x', expand=True)
-            tk.Label(panel, text='TIEMPO IDLE', fg='#B8C5D6', bg='#101723',
-                     font=('Segoe UI', scaled_font(12,scale), 'bold')).pack(pady=(0, 0))
-            self.time_label = tk.Label(panel, text='--:--', fg='#FFFFFF', bg='#101723',
+            if left_alert:
+                panel.columnconfigure((0, 1), weight=1, uniform='metrics')
+            time_caption = HudLabel(panel, text='TIEMPO IDLE', fg=text_color, bg=background,
+                     font=('Segoe UI', scaled_font(12,scale), 'bold'))
+            self.time_label = HudLabel(panel, text='--:--', fg=text_color, bg=background,
                                         font=('Consolas', max(scaled_font(21,scale), size // 8), 'bold'))
-            self.time_label.pack()
-            tk.Frame(panel, height=2, bg='#425268').pack(fill='x', pady=(3, 8))
-            tk.Label(panel, text='ALDEANOS NO CREADOS', fg='#F7C763', bg='#101723',
-                     font=('Segoe UI', scaled_font(12,scale), 'bold')).pack()
-            self.loss_label = tk.Label(panel, text='--', fg='#FFD15B', bg='#101723',
-                                      font=('Consolas', max(scaled_font(28,scale), size // 6), 'bold'))
-            self.loss_label.pack()
-            tk.Label(panel, text='Estimación: 1 aldeano cada 25 s por TC vigilado',
-                     fg='#A8B4C5', bg='#101723', font=('Segoe UI', scaled_font(8,scale))).pack(pady=(4, 0))
+
+            loss_caption = HudLabel(panel, text='SIN CREAR' if left_alert else 'ALDEANOS NO CREADOS', fg=text_color, bg=background,
+                     font=('Segoe UI', scaled_font(12,scale), 'bold'))
+            self.loss_label = HudLabel(panel, text='--', fg=text_color, bg=background,
+                                      font=('Consolas', max(scaled_font(21,scale), size // 8) if left_alert
+                                            else max(scaled_font(28,scale), size // 6), 'bold'))
+            if left_alert:
+                time_caption.grid(row=0, column=0)
+                loss_caption.grid(row=0, column=1)
+                self.time_label.grid(row=1, column=0)
+                self.loss_label.grid(row=1, column=1)
+            else:
+                time_caption.pack()
+                self.time_label.pack()
+                tk.Frame(panel, height=4, bg=GOLD_BORDER).pack(fill='x', pady=(3, 8))
+                loss_caption.pack()
+                self.loss_label.pack()
+                HudLabel(panel, text='Estimación: 1 aldeano cada 25 s por TC vigilado',
+                         fg=text_color, bg=background, font=('Segoe UI', scaled_font(8,scale))).pack(pady=(4, 0))
         else:
             self.time_label = None
             self.loss_label = None
@@ -1534,7 +1968,6 @@ class VisualAlert:
             left, top = int(monitor['left']), int(monitor['top'])
             screenw, screenh = int(monitor['width']), int(monitor['height'])
         margin = 30
-        corner = settings.get('visual_esquina', 'inferior_derecha')
         win.update_idletasks()
         full_height = win.winfo_reqheight()
         full_width = win.winfo_reqwidth()
@@ -1592,8 +2025,11 @@ class VisualAlert:
                int(settings.get('visual_monitor', 1)),
                bool(settings.get('visual_posicion_libre', False)),
                int(settings.get('visual_pos_x', 80)), int(settings.get('visual_pos_y', 75)), scale)
-        if self.window is None or self._settings_key != key:
+        appearance_key = tuple(settings.get(name, default) for name, default in HUD_APPEARANCE.items())
+        appearance_key += (settings.get('objetivo_cumplido', True), settings.get('texto_objetivo'))
+        if self.window is None or self._settings_key != key or self._appearance_key != appearance_key:
             self._build(settings)
+            self._appearance_key = appearance_key
         if self._visible:
             self._raise_without_focus()
             return
@@ -1616,7 +2052,16 @@ class VisualAlert:
                 self.window.update_idletasks()
                 current = int(get_style(hwnd, GWL_EXSTYLE))
                 set_style(hwnd, GWL_EXSTYLE, current|WS_EX_TRANSPARENT|WS_EX_LAYERED|WS_EX_NOACTIVATE)
-                # HWND_TOPMOST, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW
+                # Windows necesita inicializar la capa antes de mostrar su contenido.
+                set_alpha = user32.SetLayeredWindowAttributes
+                set_alpha.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_ubyte, ctypes.c_uint]
+                set_alpha.restype = ctypes.c_int
+                panel = self.window.winfo_children()[0]
+                color_key = sum(value << (8 * i) for i, value in enumerate(HUD_TRANSPARENT))
+                flags = 0x03 if panel.hud_overhang else 0x02  # LWA_COLORKEY | LWA_ALPHA
+                if not set_alpha(hwnd, color_key, round(255 * key[3]), flags):
+                    # Recuperar una ventana opaca si falla la composición de la capa.
+                    set_style(hwnd, GWL_EXSTYLE, (current | WS_EX_NOACTIVATE) & ~WS_EX_LAYERED)
                 self._place_native()
             else:
                 self.window.deiconify()
@@ -1656,80 +2101,46 @@ class VisualAlert:
             self.window = None
 
 
-class HourglassWidget(tk.Canvas):
-    """Reloj de arena vectorial: cae arena solo cuando crece el IDLE del juego.
+class HourglassWidget(HudLabel):
+    """Reproduce el GIF recortado sobre el fondo del contador."""
+    def __init__(self, parent, size=120, background=PARCHMENT):
+        self.frames = []
+        self.durations = []
+        with Image.open(BASE / 'reloj-de-arena.gif') as animation:
+            for frame in ImageSequence.Iterator(animation):
+                # Quita el mate blanco antes de reducir, para evitar bordes blancos.
+                rgb = np.asarray(frame.convert('RGB').crop((14, 14, 526, 526)), dtype=np.float32)
+                light = rgb.min(axis=2)
+                neutral = rgb.max(axis=2) - light < 32
+                opacity = np.where(neutral, np.clip((247 - light) / 48, 0, 1), 1)
+                unmatted = np.clip(rgb - 255 * (1 - opacity[..., None]), 0, 255)
+                unmatted /= np.maximum(opacity[..., None], 1 / 255)
+                rgba = np.dstack((np.clip(unmatted, 0, 255), opacity * 255)).astype(np.uint8)
+                picture = Image.fromarray(rgba).resize((size, size), Image.Resampling.LANCZOS)
+                self.frames.append(picture)
+                self.durations.append(max(20, frame.info.get('duration', 75)))
+        super().__init__(parent, art=self.frames[0], bg=background, highlightthickness=0, bd=0)
+        self.index = 0
+        self._job = None
+        self.bind('<Destroy>', self._stop, add='+')
 
-    El cronómetro NO se basa en estos fotogramas. Su única función es dibujar.
-    """
-    def __init__(self,parent,background='#0B1724',size=77):
-        super().__init__(parent,width=size,height=size,bg=background,
-                         highlightthickness=0,bd=0)
-        self.size=size
-        self.running=False
-        self.phase=0
-        self._job=None
-        self.draw()
-
-    def set_running(self,active):
-        active=bool(active)
-        if active != self.running:
-            self.running=active
-            self.phase=0
-            self.draw()
+    def set_running(self, active):
         if active and self._job is None:
-            self._job=self.after(125,self._animate)
-        elif not active and self._job is not None:
+            self._job = self.after(self.durations[self.index], self._advance)
+        elif not active:
+            self._stop()
+
+    def _stop(self, _event=None):
+        if self._job is not None:
             self.after_cancel(self._job)
-            self._job=None
+            self._job = None
 
-    def _animate(self):
-        self._job=None
-        if not self.running or not self.winfo_exists():
-            return
-        self.phase=(self.phase+1)%24
-        self.draw()
-        self._job=self.after(125,self._animate)
+    def _advance(self):
+        self.index = (self.index + 1) % len(self.frames)
+        self.art = self.frames[self.index]
+        self._paint()
+        self._job = self.after(self.durations[self.index], self._advance)
 
-    def draw(self):
-        self.delete('all')
-        m=self.size/2
-        gold='#F6C960'; edge='#C6D0DB'
-        if self.running:
-            # Silueta vertical de dos bulbos unidos en el centro
-            self.create_line(16,9,61,9,fill=edge,width=4)
-            self.create_line(16,68,61,68,fill=edge,width=4)
-            self.create_line(19,11,19,17,38,38,19,59,19,66,
-                             fill=edge,width=2,smooth=False)
-            self.create_line(58,11,58,17,39,38,58,59,58,66,
-                             fill=edge,width=2)
-            frac=self.phase/24
-            # Triángulo superior menguante, bulbo inferior creciente.
-            height=17*(1-frac)
-            if height>1:
-                self.create_polygon(26,18,51,18,38.5,18+height,
-                                    fill=gold,outline='')
-            if frac>.04:
-                spread=5+16*frac
-                self.create_polygon(38.5-spread,61,38.5+spread,61,38.5,61-16*frac,
-                                    fill=gold,outline='')
-            self.create_line(38.5,38+frac*4,38.5,55-frac*3,fill=gold,width=2)
-            for i in range(4):
-                y=37+((self.phase*4+i*10)%24)
-                self.create_oval(37+(i%2)*2,y,39+(i%2)*2,y+2,fill=gold,outline='')
-        else:
-            # Reloj tumbado: detenido y estable, arena sin caída.
-            self.create_line(9,17,9,60,fill=edge,width=4)
-            self.create_line(68,17,68,60,fill=edge,width=4)
-            self.create_line(11,19,17,19,38,38,59,19,66,19,
-                             fill=edge,width=2)
-            self.create_line(11,58,17,58,38,39,59,58,66,58,
-                             fill=edge,width=2)
-            self.create_polygon(16,28,16,50,32,39,fill=gold,outline='')
-            self.create_polygon(61,25,61,52,44,39,fill='#B88C44',outline='')
-        # Todas las coordenadas del dibujo original se definieron sobre 77×77.
-        if self.size != 77:
-            ratio = self.size / 77.0
-            self.scale('all', 0, 0, ratio, ratio)
 
 class TotalIdleOverlay(VisualAlert):
     """Segundo overlay independiente: permanece visible aunque no haya alarma.
@@ -1741,11 +2152,13 @@ class TotalIdleOverlay(VisualAlert):
         super().__init__(root, log)
         self.total_label = None
         self.value_seconds = 0
+        self.hourglass_active = False
         self.hourglass = None
 
     @staticmethod
     def overlay_settings(settings):
         return {
+            **{name: settings.get(name, default) for name, default in HUD_APPEARANCE.items()},
             'imagen_visual': '__hud_idle_acumulado__',
             'visual_tamano': 220, 'visual_alerta_grande': False,
             'visual_escala': int(settings.get('idle_total_escala',100)),
@@ -1759,6 +2172,8 @@ class TotalIdleOverlay(VisualAlert):
         }
 
     def _build(self, settings):
+        background, text_color = hud_colors(settings)
+        self.text_color = text_color
         self.hide()
         if self.hourglass is not None:
             self.hourglass.set_running(False)
@@ -1772,23 +2187,24 @@ class TotalIdleOverlay(VisualAlert):
         win.overrideredirect(True)
         win.attributes('-topmost', True)
         opacity = max(30, min(100, int(settings['visual_opacidad']))) / 100
-        try:
+        if os.name != 'nt':
             win.wm_attributes('-alpha', opacity)
-        except tk.TclError:
-            pass
-        win.configure(bg='#0B1724')
-        box = tk.Frame(win, bg='#0B1724', padx=round(14*scale/100), pady=round(8*scale/100), highlightthickness=2,
-                       highlightbackground='#79BEFA')
+        win.configure(bg=background)
+        box = parchment_panel(win, vine_row=1, appearance=settings, padx=round(14*scale/100), pady=round(8*scale/100), highlightthickness=PANEL_BORDER,
+                       highlightbackground=GOLD_BORDER, highlightcolor=GOLD_BORDER)
         box.pack(fill='both', expand=True)
-        tk.Label(box, text='IDLE TC ACUMULADO', bg='#0B1724', fg='#AFC9E5',
-                 font=('Segoe UI', scaled_font(11,scale), 'bold')).pack(anchor='center')
-        middle=tk.Frame(box,bg='#0B1724')
+        box = box.content
+        middle=hud_group(box,bg=background)
         middle.pack(anchor='center')
-        self.hourglass=HourglassWidget(middle,size=max(38,round(77*scale/100)))
+        self.hourglass=HourglassWidget(middle,size=max(60,round(120*scale/100)), background=background)
         self.hourglass.pack(side='left',padx=(0,5))
-        self.total_label = tk.Label(middle, text=format_game_duration(self.value_seconds),
-                 bg='#0B1724', fg='#FFFFFF', font=('Consolas', scaled_font(28,scale), 'bold'))
-        self.total_label.pack(side='left',anchor='center')
+        time_group = hud_group(middle, bg=background)
+        time_group.pack(side='left')
+        HudLabel(time_group, text='IDLE TC ACUMULADO', bg=background, fg=text_color,
+                 font=('Segoe UI', scaled_font(11,scale), 'bold')).pack()
+        self.total_label = HudLabel(time_group, text=format_game_duration(self.value_seconds),
+                 bg=background, fg=text_color, font=('Consolas', scaled_font(28,scale), 'bold'))
+        self.total_label.pack()
         win.update_idletasks()
         w, h = win.winfo_reqwidth(), win.winfo_reqheight()
         with mss.mss() as sct:
@@ -1814,14 +2230,20 @@ class TotalIdleOverlay(VisualAlert):
 
     def show_total(self, settings):
         super().show(self.overlay_settings(settings))
-        self.update_total(self.value_seconds)
+        self.update_total(self.value_seconds, self.hourglass_active)
 
     def update_total(self, seconds, active=False):
         self.value_seconds = max(0, int(seconds or 0))
+        self.hourglass_active = bool(active)
         if self.total_label is not None:
             self.total_label.config(text=format_game_duration(self.value_seconds))
         if self.hourglass is not None and self.hourglass.winfo_exists():
-            self.hourglass.set_running(active)
+            self.hourglass.set_running(self.hourglass_active and self._visible)
+
+    def hide(self):
+        super().hide()
+        if self.hourglass is not None and self.hourglass.winfo_exists():
+            self.hourglass.set_running(False)
 
 
 class AgeIdleOverlay(VisualAlert):
@@ -1842,6 +2264,7 @@ class AgeIdleOverlay(VisualAlert):
     @staticmethod
     def overlay_settings(settings):
         return {
+            **{name: settings.get(name, default) for name, default in HUD_APPEARANCE.items()},
             'imagen_visual':'__edades_idle__',
             'visual_tamano': 220, 'visual_alerta_grande': False,
             'visual_escala': int(settings.get('edades_escala',100)),
@@ -1855,6 +2278,8 @@ class AgeIdleOverlay(VisualAlert):
         }
 
     def _build(self, settings):
+        background, text_color = hud_colors(settings)
+        self.text_color = text_color
         self.hide()
         if self.window is not None:
             self.window.destroy()
@@ -1865,45 +2290,44 @@ class AgeIdleOverlay(VisualAlert):
         win.overrideredirect(True)
         win.attributes('-topmost',True)
         opacity = max(30,min(100,int(settings['visual_opacidad'])))/100
-        try:
-            win.wm_attributes('-alpha',opacity)
-        except tk.TclError:
-            pass
-        win.configure(bg='#111827')
-        panel = tk.Frame(win,bg='#111827',padx=round(14*scale/100),pady=round(10*scale/100),
-                         highlightthickness=2,highlightbackground='#D6AA59')
+        if os.name != 'nt':
+            win.wm_attributes('-alpha', opacity)
+        win.configure(bg=background)
+        panel = parchment_panel(win,vine_row=2, appearance=settings,padx=round(14*scale/100),pady=round(10*scale/100),
+                         highlightthickness=PANEL_BORDER,highlightbackground=GOLD_BORDER, highlightcolor=GOLD_BORDER)
         panel.pack(fill='both',expand=True)
-        tk.Label(panel,text='IDLE TC POR EDADES',bg='#111827',fg='#F0CE89',
+        panel = panel.content
+        HudLabel(panel,text='IDLE TC POR EDADES',bg=background,fg=text_color,
                  font=('Segoe UI',scaled_font(12,scale),'bold')).grid(row=0,column=0,columnspan=3,pady=(0,7))
         for col,label in [(0,'EDAD'),(1,'IDLE TC'),(2,'NO CREADOS')]:
-            tk.Label(panel,text=label,bg='#111827',fg='#9FB1CA',
+            HudLabel(panel,text=label,bg=background,fg=text_color,
                      font=('Segoe UI',scaled_font(9,scale),'bold')).grid(row=1,column=col,sticky='w' if col==0 else 'e',padx=(0,12) if col<2 else (4,0))
         self.age_value_labels = {}
         self.age_loss_labels = {}
         for row, age in enumerate(AGE_ORDER,2):
-            tk.Label(panel,text=AGE_NAMES[age],bg='#111827',fg='#D8E2EE',
+            HudLabel(panel,text=AGE_NAMES[age],bg=background,fg=text_color,
                      font=('Segoe UI',scaled_font(10,scale)),anchor='w').grid(row=row,column=0,sticky='w',padx=(0,15),pady=3)
-            val=tk.Label(panel,text='--:--',bg='#111827',fg='#FFFFFF',
+            val=HudLabel(panel,text='--:--',bg=background,fg=text_color,
                          font=('Consolas',scaled_font(13,scale),'bold'),anchor='e')
             val.grid(row=row,column=1,sticky='e',padx=(0,12),pady=3)
-            lost=tk.Label(panel,text='--',bg='#111827',fg='#F6C65E',
+            lost=HudLabel(panel,text='--',bg=background,fg=text_color,
                           font=('Consolas',scaled_font(14,scale),'bold'),anchor='e')
             lost.grid(row=row,column=2,sticky='e',pady=3)
             self.age_value_labels[age]=val
             self.age_loss_labels[age]=lost
-        tk.Frame(panel,bg='#5D6474',height=2).grid(row=6,column=0,columnspan=3,sticky='ew',pady=(9,7))
-        tk.Label(panel,text='TOTAL PARTIDA',bg='#111827',fg='#F0CE89',
+        tk.Frame(panel,bg=GOLD_BORDER,height=2).grid(row=6,column=0,columnspan=3,sticky='ew',pady=(9,7))
+        HudLabel(panel,text='TOTAL PARTIDA',bg=background,fg=text_color,
                  font=('Segoe UI',scaled_font(10,scale),'bold')).grid(row=7,column=0,sticky='w')
-        self.total_time_label=tk.Label(panel,text='00:00',bg='#111827',fg='#FFFFFF',
+        self.total_time_label=HudLabel(panel,text='00:00',bg=background,fg=text_color,
                          font=('Consolas',scaled_font(14,scale),'bold'))
         self.total_time_label.grid(row=7,column=1,sticky='e',padx=(0,12))
-        self.total_loss_label=tk.Label(panel,text='0',bg='#111827',fg='#F6C65E',
+        self.total_loss_label=HudLabel(panel,text='0',bg=background,fg=text_color,
                          font=('Consolas',scaled_font(15,scale),'bold'))
         self.total_loss_label.grid(row=7,column=2,sticky='e')
-        self.unassigned_label=tk.Label(panel,text='',bg='#111827',fg='#99A8BC',
+        self.unassigned_label=HudLabel(panel,text='',bg=background,fg=text_color,
                                        font=('Segoe UI',scaled_font(8,scale)),anchor='w')
         self.unassigned_label.grid(row=8,column=0,columnspan=3,sticky='w',pady=(4,0))
-        self.current_age_label=tk.Label(panel,text='Edad detectada: --',bg='#111827',fg='#97A8C1',
+        self.current_age_label=HudLabel(panel,text='Edad detectada: --',bg=background,fg=text_color,
                      font=('Segoe UI',scaled_font(9,scale)),anchor='w')
         self.current_age_label.grid(row=9,column=0,columnspan=3,sticky='w',pady=(6,0))
         win.update_idletasks()
@@ -1943,9 +2367,9 @@ class AgeIdleOverlay(VisualAlert):
             value=snapshot.get('values',{}).get(age,0)
             lost=snapshot.get('lost_by_age',{}).get(age, value//25)
             label.config(text=format_game_duration(value) if seen else '--:--',
-                         fg='#F0CE89' if age == snapshot.get('age') else '#FFFFFF')
+                         fg=self.text_color)
             self.age_loss_labels[age].config(text=str(lost) if seen else '--',
-                         fg='#FFD66D' if age == snapshot.get('age') else '#D6AA59')
+                         fg=self.text_color)
         if self.total_time_label is not None:
             self.total_time_label.config(text=format_game_duration(snapshot.get('total',0)))
         if self.total_loss_label is not None:
@@ -1975,7 +2399,8 @@ class GameControlDock(VisualAlert):
 
     @staticmethod
     def overlay_settings(settings):
-        return {'imagen_visual':'__controles_aoe__','visual_tamano':220,
+        return {**{name: settings.get(name, default) for name, default in HUD_APPEARANCE.items()},
+            'imagen_visual':'__controles_aoe__','visual_tamano':220,
             'visual_escala':int(settings.get('controles_escala',100)),
             'visual_alerta_grande':False,'visual_esquina':'superior_izquierda',
             'visual_posicion_libre':True,
@@ -1986,6 +2411,9 @@ class GameControlDock(VisualAlert):
             'mostrar_perdidas':False}
 
     def _build(self, settings):
+        background, text_color = hud_colors(settings)
+        self.text_color = text_color
+        self.button_background = background
         self.hide()
         if self.window is not None:
             self.window.destroy()
@@ -1995,34 +2423,34 @@ class GameControlDock(VisualAlert):
         win.overrideredirect(True)
         win.attributes('-topmost',True)
         opacity=max(30,min(100,int(settings['visual_opacidad'])))/100
-        try:
-            win.wm_attributes('-alpha',opacity)
-        except tk.TclError:
-            pass
-        win.configure(bg='#0F1926')
-        panel=tk.Frame(win,bg='#0F1926',padx=round(5*scale/100),pady=round(5*scale/100),
-                       highlightbackground='#D6AA59',highlightthickness=2)
+        if os.name != 'nt':
+            win.wm_attributes('-alpha', opacity)
+        win.configure(bg=background)
+        panel=parchment_panel(win,vine_row=3, appearance=settings,padx=round(5*scale/100),pady=round(5*scale/100),
+                       highlightbackground=GOLD_BORDER, highlightcolor=GOLD_BORDER, highlightthickness=PANEL_BORDER)
         panel.pack(fill='both',expand=True)
-        upper_buttons=tk.Frame(panel,bg='#0F1926')
-        upper_buttons.pack(anchor='center')
-        lower_buttons=tk.Frame(panel,bg='#0F1926')
-        lower_buttons.pack(anchor='center',pady=(3,0))
-        self.mute_button=tk.Button(upper_buttons,text='🔊',command=self.mute_callback,
-                                  bg='#334155',fg='white',font=('Segoe UI',scaled_font(10,scale),'bold'),
-                                  activebackground='#465A75',width=3)
-        self.mute_button.pack(side='left',padx=3)
-        self.pause_button=tk.Button(upper_buttons,text='Ⅱ',command=self.pause_callback,
-                                   bg='#334155',fg='white',font=('Segoe UI',scaled_font(10,scale),'bold'),
-                                   activebackground='#465A75',width=3)
-        self.pause_button.pack(side='left',padx=3)
-        self.visibility_buttons={}
-        for key, short_name in [('total','↑'), ('visual','←'), ('ages','→')]:
-            button=tk.Button(lower_buttons, text=short_name,
-                command=lambda item=key: self.visibility_callback(item),
-                bg='#24533C', fg='white', font=('Segoe UI', scaled_font(9,scale),'bold'),
-                activebackground='#465A75', width=3)
-            button.pack(side='left',padx=2)
-            self.visibility_buttons[key]=button
+        panel = panel.content
+        self.visibility_buttons = {}
+        for key, arrow in (('visual', '←'), ('total', '↑'), ('ages', '→')):
+            button = tk.Button(panel, text=arrow,
+                               command=lambda item=key: self.visibility_callback(item),
+                               bg=background, fg=text_color, activeforeground=text_color,
+                               font=('Segoe UI', scaled_font(12, scale), 'bold'),
+                               activebackground=background, width=3)
+            button.pack(side='left', padx=2, fill='y')
+            self.visibility_buttons[key] = button
+            self.paint_direction_arrow(button, scale, text_color, key)
+        self.speaker_icons = tuple(self.speaker_icon(scale, text_color, muted)
+                                   for muted in (False, True))
+        self.mute_button = tk.Button(panel, image=self.speaker_icons[0],
+                                     command=self.mute_callback, bg=background,
+                                     activebackground=background, padx=5)
+        self.mute_button.pack(side='left', padx=(6, 2), fill='y')
+        self.pause_button = tk.Button(panel, text='Ⅱ', command=self.pause_callback,
+                                      bg=background, fg=text_color, activeforeground=text_color,
+                                      font=('Segoe UI', scaled_font(12, scale), 'bold'),
+                                      activebackground=background, width=3)
+        self.pause_button.pack(side='left', padx=2, fill='y')
         win.update_idletasks()
         w,h=win.winfo_reqwidth(),win.winfo_reqheight()
         with mss.mss() as sct:
@@ -2067,15 +2495,57 @@ class GameControlDock(VisualAlert):
         except Exception as exc:
             self.log('No se pudo activar botones flotantes: '+str(exc))
 
+    def speaker_icon(self, scale, color, muted):
+        size = max(18, round(29 * scale / 100))
+        icon = Image.new('RGBA', (96, 96))
+        draw = ImageDraw.Draw(icon)
+        draw.polygon(((9, 36), (25, 36), (48, 16), (48, 80), (25, 60), (9, 60)), fill=color)
+        if muted:
+            draw.line(((60, 36), (84, 60)), fill=color, width=6)
+            draw.line(((60, 60), (84, 36)), fill=color, width=6)
+        else:
+            draw.arc((38, 27, 77, 69), -55, 55, fill=color, width=5)
+            draw.arc((38, 13, 92, 83), -55, 55, fill=color, width=5)
+        return ImageTk.PhotoImage(icon.resize((size, size), Image.Resampling.LANCZOS),
+                                 master=self.root)
+
+    def paint_direction_arrow(self, button, scale, color, direction):
+        width = max(26, round(41 * scale / 100))
+        height = max(24, round(31 * scale / 100))
+        button.face = tk.PhotoImage(master=button, width=width, height=height)
+        button.config(image=button.face, width=width, height=height, padx=0, pady=0)
+
+        def render(paper):
+            x, y = (paper.width - width) // 2, (paper.height - height) // 2
+            face = paper.crop((x, y, x + width, y + height))
+            draw = ImageDraw.Draw(face)
+            cx, cy = width // 2, 2 * height // 3
+            length = max(7, height // 3)
+            stroke = max(2, width // 16)
+            dx, dy = {'visual': (-1, 0), 'total': (0, -1), 'ages': (1, 0)}[direction]
+
+            def point(along, across=0):
+                return cx + along * dx - across * dy, cy + along * dy + across * dx
+
+            draw.line((point(-length), point(length)), fill=color, width=stroke)
+            draw.line((point(length // 3, -length // 2), point(length),
+                       point(length // 3, length // 2)), fill=color, width=stroke)
+            button.face = ImageTk.PhotoImage(face, master=button)
+            button.config(image=button.face)
+
+        paint_on_hud(button, render)
+
     def update_buttons(self,silenced,manual_paused):
         self.silenced=bool(silenced)
         self.manual_paused=bool(manual_paused)
         if self.mute_button is not None:
-            self.mute_button.config(text='🔇' if silenced else '🔊',
-                                    bg='#8B4A25' if silenced else '#334155')
+            self.mute_button.config(image=self.speaker_icons[self.silenced],
+                                    bg=self.button_background,
+                                    relief='sunken' if silenced else 'raised')
         if self.pause_button is not None:
             self.pause_button.config(text='▶' if manual_paused else 'Ⅱ',
-                                     bg='#2C6A51' if manual_paused else '#334155')
+                                     bg=self.button_background,
+                                     relief='sunken' if manual_paused else 'raised')
 
 
     def update_visibility(self, states):
@@ -2084,9 +2554,8 @@ class GameControlDock(VisualAlert):
         labels={'total':'↑', 'visual':'←', 'ages':'→'}
         for key, button in self.visibility_buttons.items():
             showing=self.visibility_state[key]
-            button.config(text=labels[key],
-                          bg='#24533C' if showing else '#6A3540',
-                          width=3)
+            button.config(text=labels[key], bg=self.button_background,
+                          relief='raised' if showing else 'sunken')
 
 
 class App:
@@ -2139,6 +2608,11 @@ class App:
         self.flicker_filter_var = tk.StringVar(value=str(self.config.get('filtro_parpadeo_segundos', 1)))
         self.latest_metrics = None
         self.running_settings = None
+        self.celebration_job = None
+        self.goal_achieved = True
+        self.goal_banner = GOAL_BANNERS[0]
+        self.latest_visual_snapshot = None
+        self.imperial_checked = False
         self.mode_var = tk.StringVar(value=self.config['modo'])
         self.monitor_var = tk.StringVar(value=str(self.config['monitor']))
         self.threshold_var = tk.StringVar(value=str(self.config['umbral']))
@@ -2155,6 +2629,10 @@ class App:
         self.visual_free_var = tk.BooleanVar(value=self.config.get('visual_posicion_libre', False))
         self.visual_x_var = tk.IntVar(value=self.config.get('visual_pos_x', 80))
         self.visual_y_var = tk.IntVar(value=self.config.get('visual_pos_y', 75))
+        self.hud_appearance_vars = {
+            name: tk.StringVar(value=self.config.get(name, default))
+            for name, default in HUD_APPEARANCE.items()
+        }
         self.visual_opacity_var = tk.IntVar(value=self.config['visual_opacidad'])
         self.visual_monitor_var = tk.StringVar()
         self.visual_monitor_map = {}
@@ -2202,20 +2680,26 @@ class App:
 
     def _create_widgets(self):
         self.root.geometry('790x720')
-        pad = ttk.Frame(self.root, padding=12)
+        pad = parchment_panel(self.root, vine_row=4, padx=12, pady=12,
+                              highlightthickness=PANEL_BORDER, highlightbackground=GOLD_BORDER,
+                              highlightcolor=GOLD_BORDER)
         pad.pack(fill='both', expand=True)
+        pad = pad.content
         ttk.Label(pad, text='Avisador de aldeanos · Age of Empires II: DE · V21',
                   font=('Segoe UI', 15, 'bold')).pack(anchor='w')
         ttk.Label(pad, text='Reconocimiento de pantalla · Voz, pitidos o MP3/WAV · Usa la barra a la derecha para bajar.').pack(anchor='w', pady=(3, 8))
         tabs = ttk.Notebook(pad)
         tabs.pack(fill='both', expand=True)
         self.scrollable_tabs = []
-        for heading in ('Detección y límites', 'Sonido y volumen', 'Aviso visual', 'IDLE acumulado', 'IDLE por edades'):
+        for heading in ('Detección y límites', 'Sonido y volumen', 'Aviso visual',
+                        'IDLE acumulado', 'IDLE por edades', 'Objetivos IDLE'):
             tab = ScrollableTab(tabs)
             tabs.add(tab, text=heading)
             self.scrollable_tabs.append(tab)
         self.tabs = tabs
-        setup, sound_tab, visual_tab, idle_tab, age_tab = [tab.content for tab in self.scrollable_tabs]
+        setup, sound_tab, visual_tab, idle_tab, age_tab, goals_tab = [
+            tab.content for tab in self.scrollable_tabs]
+        self.create_idle_goals(goals_tab)
         lf = ttk.LabelFrame(setup, text='1. Detección de producción', padding=8)
         lf.pack(fill='x', pady=5)
         ttk.Radiobutton(lf, text='Global: ausencia de aldeanos en la cola visible',
@@ -2223,7 +2707,7 @@ class App:
         ttk.Radiobutton(lf, text='Individual: un indicador propio y siempre visible para cada centro urbano',
                         variable=self.mode_var, value='individual').pack(anchor='w')
         ttk.Label(lf, text='Reconoce iconos, no solo el color verde. La cola global NO identifica cada TC.',
-                  foreground='#995400').pack(anchor='w', pady=4)
+                  foreground=GOLD_TEXT).pack(anchor='w', pady=4)
         lf2 = ttk.LabelFrame(setup, text='2. Calibración', padding=8)
         lf2.pack(fill='x', pady=6)
         row = ttk.Frame(lf2)
@@ -2240,14 +2724,14 @@ class App:
         ttk.Button(row_zones, text='Calibrar escudo', command=self.calibrate_age).pack(side='left', padx=(0,9))
         ttk.Button(row_zones, text='Exportar zonas…', command=self.export_zones).pack(side='left')
         ttk.Button(row_zones, text='Importar zonas…', command=self.import_zones).pack(side='left', padx=7)
-        ttk.Label(row_zones, text='Zonas guardadas automáticamente.', foreground='#176b47').pack(side='left')
+        ttk.Label(row_zones, text='Zonas guardadas automáticamente.', foreground=GOLD_TEXT).pack(side='left')
         ttk.Label(lf2, text='Primer aviso tras 3 s de IDLE del reloj de partida. Repetición configurable en «Sonido y volumen».',
                   wraplength=650).pack(anchor='w', pady=(7, 0))
         ttk.Checkbutton(lf2, text='Pausar si el juego no está en primer plano', variable=self.foreground_var).pack(anchor='w', pady=3)
         ttk.Button(lf2, text='Calibrar TEXTO de edad (blanco/amarillo)', command=self.calibrate_age_text).pack(anchor='w', pady=4)
         ttk.Checkbutton(lf2,text='Contar como IDLE el icono rojo calibrado (aunque se vea aldeano)',variable=self.red_on_var).pack(anchor='w',pady=3)
-        ttk.Label(lf2,text='Calibra el indicador ROJO con el icono realmente rojo. Su zona queda guardada y tendrá prioridad frente a la plantilla hombre/mujer.',foreground='#995400',wraplength=660).pack(anchor='w',pady=2)
-        ttk.Label(lf2, text='Todos los segundos IDLE se obtienen exclusivamente del reloj OCR de la partida.', wraplength=670, foreground='#176b47').pack(anchor='w')
+        ttk.Label(lf2,text='Calibra el indicador ROJO con el icono realmente rojo. Su zona queda guardada y tendrá prioridad frente a la plantilla hombre/mujer.',foreground=GOLD_TEXT,wraplength=660).pack(anchor='w',pady=2)
+        ttk.Label(lf2, text='Todos los segundos IDLE se obtienen exclusivamente del reloj OCR de la partida.', wraplength=670, foreground=GOLD_TEXT).pack(anchor='w')
         ttk.Label(lf2, text='Calibrar pausa: pulsa tu tecla o botón habitual de pausa antes de cada captura. No se necesita F3.', wraplength=670).pack(anchor='w', pady=2)
         line_ocr = ttk.Frame(lf2); line_ocr.pack(fill='x', pady=4)
         ttk.Label(line_ocr, text='Lectura OCR cada (s):').pack(side='left')
@@ -2264,7 +2748,7 @@ class App:
         ttk.Checkbutton(lf2, text='Reconocer tecnologías del centro urbano como PRODUCCIÓN activa (también con progreso verde)',
                         variable=self.technology_on_var).pack(anchor='w', pady=(5, 1))
         ttk.Label(lf2, text='Incluye 23 plantillas de tecnología y 8 de aldeanos, con las 12 imágenes originales. Icono reconocido (normal/verde) = activo; rojo o sin iconos = IDLE. Calibra solo la cola.',
-                  wraplength=665, foreground='#176b47').pack(anchor='w')
+                  wraplength=665, foreground=GOLD_TEXT).pack(anchor='w')
         limits = ttk.LabelFrame(setup, text='3. Detención automática de avisos (ambos límites opcionales)', padding=8)
         limits.pack(fill='x', pady=6)
         r1 = ttk.Frame(limits)
@@ -2282,11 +2766,12 @@ class App:
         ttk.Label(limits, text='El reloj se lee incluso después de alcanzar un límite. Detecta saltos a 00:00:30 o similares; se confirman dos lecturas; requiere zona del reloj calibrada y Tesseract OCR.',
                   wraplength=680).pack(anchor='w', pady=(1, 4))
         ttk.Label(limits, text='Hay que seleccionar el reloj y/o contador en la calibración. Requiere Tesseract OCR.',
-                  foreground='#995400', wraplength=700).pack(anchor='w', pady=(4, 0))
+                  foreground=GOLD_TEXT, wraplength=700).pack(anchor='w', pady=(4, 0))
         audio = ttk.LabelFrame(sound_tab, text='Tipo de aviso', padding=12)
         audio.pack(fill='x', pady=6)
         for value, label in [('voz', 'Voz de Windows: «Crea aldeanos»'),
                              ('doble', 'Dos pitidos'), ('triple', 'Tres pitidos'),
+                             *((key, label) for key, (label, _) in BUILTIN_ALERTS.items()),
                              ('archivo', 'Archivo de sonido propio (MP3 o WAV)')]:
             ttk.Radiobutton(audio, text=label, variable=self.sound_var, value=value).pack(anchor='w', pady=3)
         row_file = ttk.Frame(audio)
@@ -2313,7 +2798,7 @@ class App:
                    textvariable=self.repeat_var).pack(side='left', padx=(10,5))
         ttk.Label(interval_row, text='segundos').pack(side='left')
         ttk.Label(interval_box, text='El primer aviso sigue esperando 3 s de IDLE. La repetición usa el reloj del juego; en pausa no avanza.',
-                  wraplength=660, foreground='#176b47').pack(anchor='w', pady=(6,0))
+                  wraplength=660, foreground=GOLD_TEXT).pack(anchor='w', pady=(6,0))
         ttk.Button(sound_tab, text='▶ Probar sonido', command=self.test_sound).pack(anchor='w', pady=8)
         ttk.Label(sound_tab, text='El sonido escogido se recuerda al abrir el programa de nuevo.').pack(anchor='w')
         ch = ttk.LabelFrame(visual_tab, text='Como quieres que te avise', padding=12)
@@ -2388,6 +2873,22 @@ class App:
                         variable=self.losses_var).pack(anchor='w', pady=5)
         ttk.Label(visual_tab, text='Ambas cifras IDLE proceden ÚNICAMENTE del reloj de la partida, sin usar tiempo de Windows. '
                   'Si el reloj no se puede leer, verás --:-- y --.', wraplength=680).pack(anchor='w')
+        appearance = ttk.LabelFrame(visual_tab, text='Aspecto de los marcos durante la partida', padding=8)
+        appearance.pack(fill='x', pady=5)
+        for text, value in (('Madera oscura', 'madera_oscura'),
+                            ('Madera rústica', 'madera_rustica'), ('Color liso', 'color')):
+            ttk.Radiobutton(appearance, text=text, value=value,
+                            variable=self.hud_appearance_vars['marco_fondo']).pack(side='left', padx=4)
+        ttk.Button(appearance, text='Color de fondo',
+                   command=lambda: self.choose_hud_color('marco_color_fondo')).pack(side='left', padx=4)
+        ttk.Button(appearance, text='Color de letras',
+                   command=lambda: self.choose_hud_color('marco_color_letras')).pack(side='left', padx=4)
+        frame_choices = ttk.Frame(visual_tab)
+        frame_choices.pack(fill='x', pady=(0, 5))
+        ttk.Label(frame_choices, text='Marco de madera').pack(side='left', padx=4)
+        for text, value in (('Tallada', 'madera_tallada'), ('Dorada', 'madera_dorada')):
+            ttk.Radiobutton(frame_choices, text=text, value=value,
+                            variable=self.hud_appearance_vars['marco_estilo']).pack(side='left', padx=4)
         ttk.Button(visual_tab, text='PROBAR AVISO COMPLETO: ICONO + SONIDO (15 segundos)', command=self.test_visual).pack(anchor='w', pady=10)
         ttk.Label(visual_tab, text='La prueba dura 15 s: pulsa el botón y vuelve al juego inmediatamente. Usa ventana sin bordes, no pantalla completa exclusiva. El aviso real aparece solo en ALERTA.',
                   wraplength=680).pack(anchor='w')
@@ -2423,9 +2924,9 @@ class App:
             ttk.Scale(line, from_=30 if var is self.idle_total_alpha_var else 0, to=100,
                       variable=var, orient='horizontal', length=300).pack(side='left', padx=6)
             ttk.Label(line, textvariable=var, width=4).pack(side='left')
-        ttk.Label(box_idle, text='Está sincronizado con el aviso grande: ambos usan EL MISMO cálculo y el mismo segundo OCR.', foreground='#176b47').pack(anchor='w')
+        ttk.Label(box_idle, text='Está sincronizado con el aviso grande: ambos usan EL MISMO cálculo y el mismo segundo OCR.', foreground=GOLD_TEXT).pack(anchor='w')
         ttk.Label(box_idle, text='Para usarlo, calibra la zona del reloj y activa el OCR. En el modo global solo mide los intervalos sin aldeanos en la cola visible; no identifica TCs independientes.',
-                  wraplength=660, foreground='#995400').pack(anchor='w', pady=6)
+                  wraplength=660, foreground=GOLD_TEXT).pack(anchor='w', pady=6)
         row_test = ttk.Frame(box_idle)
         row_test.pack(fill='x', pady=8)
         ttk.Button(row_test, text='Probar contador durante 15 s', command=self.test_total).pack(side='left')
@@ -2444,7 +2945,7 @@ class App:
                   wraplength=670).pack(anchor='w',pady=(2,7))
         ttk.Button(era,text='Calibrar escudo de edad',command=self.calibrate_age).pack(anchor='w')
         ttk.Button(era,text='Calibrar texto de edad (respaldo)',command=self.calibrate_age_text).pack(anchor='w',pady=4)
-        ttk.Label(era,textvariable=self.current_age_var,foreground='#176b47',
+        ttk.Label(era,textvariable=self.current_age_var,foreground=GOLD_TEXT,
                   wraplength=650).pack(anchor='w',pady=7)
         r = ttk.Frame(era);r.pack(fill='x',pady=5)
         ttk.Label(r,text='Monitor del display:').pack(side='left')
@@ -2475,7 +2976,7 @@ class App:
         ttk.Label(era,text='Las edades no observadas mostrarán --:--. '
                   'El OCR del reloj es obligatorio; puedes calibrar escudo, texto o ambos. '
                   'Recalibra si cambias la escala del HUD.',
-                  foreground='#995400',wraplength=660).pack(anchor='w')
+                  foreground=GOLD_TEXT,wraplength=660).pack(anchor='w')
 
         control_box=ttk.LabelFrame(age_tab,text='Mandos flotantes: sonido, pausa y mostrar/ocultar displays',padding=12)
         control_box.pack(fill='x',pady=8)
@@ -2484,8 +2985,8 @@ class App:
         ttk.Label(control_box,text='Pausar el avisador detiene el cálculo y los avisos, pero no pausa Age of Empires. '
                   'Al reanudar, el reloj del juego vuelve a ser la única referencia.',
                   wraplength=680).pack(anchor='w',pady=3)
-        ttk.Label(control_box, text='Tres flechas: ↑ contador superior, ← aviso izquierdo y → edades de la derecha. Ocultar no borra estadísticas.',
-                  wraplength=660, foreground='#176b47').pack(anchor='w', pady=3)
+        ttk.Label(control_box, text='Tres flechas: ← aviso izquierdo, ↑ contador superior y → edades de la derecha. Ocultar no borra estadísticas.',
+                  wraplength=660, foreground=GOLD_TEXT).pack(anchor='w', pady=3)
         mrow=ttk.Frame(control_box);mrow.pack(fill='x',pady=5)
         ttk.Label(mrow,text='Monitor de los botones:').pack(side='left')
         self.control_monitor_box=ttk.Combobox(mrow,textvariable=self.control_monitor_var,
@@ -2511,7 +3012,7 @@ class App:
         ttk.Button(test_row,text='Mostrar/probar mandos',command=self.test_control_overlay).pack(side='left')
         ttk.Button(test_row,text='Aplicar posición',command=self.apply_control_overlay).pack(side='left',padx=7)
         ttk.Button(test_row,text='Cerrar prueba',command=self.close_control_preview).pack(side='left')
-        ttk.Label(control_box,text='↑ contador superior · ← aviso izquierdo · → edades derecha · 🔊/🔇 audio · Ⅱ/▶ pausa. Verde=visible, rojo=oculto.',wraplength=680).pack(anchor='w')
+        ttk.Label(control_box,text='← aviso izquierdo · ↑ contador superior · → edades derecha · 🔊/🔇 audio · Ⅱ/▶ pausa. Botón elevado: visible. Botón hundido: oculto.',wraplength=680).pack(anchor='w')
 
         # Display opcional e independiente por edades.
         controls = ttk.Frame(pad)
@@ -2533,7 +3034,9 @@ class App:
         log_bar = ttk.Scrollbar(log_frame, orient='vertical')
         log_bar.pack(side='right', fill='y')
         self.logbox = tk.Text(log_frame, height=5, font=('Consolas', 9),
-                              state='disabled', wrap='word',
+                              state='disabled', wrap='word', bg=PARCHMENT_LIGHT, fg=GOLD_TEXT,
+                              relief='flat', highlightthickness=2,
+                              highlightbackground=GOLD_BORDER, highlightcolor=GOLD_BORDER,
                               yscrollcommand=log_bar.set)
         self.logbox.pack(side='left', fill='both', expand=True)
         log_bar.configure(command=self.logbox.yview)
@@ -2756,7 +3259,7 @@ class App:
             message='Sonido ACTIVADO'
         else:
             self.muted_event.set()
-            self.sound_engine.stop_sound()
+            self.sound_engine.stop_sound(include_celebration=True)
             message='Sonido SILENCIADO'
         self.mute_button.config(text='Activar sonido' if self.muted_event.is_set() else 'Silenciar')
         self.game_controls.update_buttons(self.muted_event.is_set(),self.manual_pause_event.is_set())
@@ -2768,7 +3271,8 @@ class App:
             message='Avisador REANUDADO'
         else:
             self.manual_pause_event.set()
-            self.sound_engine.stop_sound()
+            self.finish_celebration()
+            self.sound_engine.stop_sound(include_celebration=True)
             self.visual_alert.hide()
             message='Avisador en PAUSA MANUAL (el juego no se pausa)'
         self.manual_pause_button.config(text='Reanudar avisador' if self.manual_pause_event.is_set() else 'Pausar avisador')
@@ -3008,7 +3512,8 @@ class App:
         return self.visual_monitor_map[label]
 
     def visual_config(self):
-        return {'canal_aviso': self.channel_var.get(),
+        return {**{name: value.get() for name, value in self.hud_appearance_vars.items()},
+                'canal_aviso': self.channel_var.get(),
                 'mostrar_aviso_visual': bool(self.visual_enabled_var.get()),
                 'imagen_visual': self.visual_file_var.get().strip(),
                 'visual_tamano': int(self.visual_size_var.get()),
@@ -3021,6 +3526,15 @@ class App:
                 'visual_pos_y': int(self.visual_y_var.get()),
                 'visual_opacidad': int(self.visual_opacity_var.get()),
                 'mostrar_perdidas': bool(self.losses_var.get())}
+
+    def choose_hud_color(self, name):
+        variable = self.hud_appearance_vars[name]
+        _, color = colorchooser.askcolor(color=variable.get(), parent=self.root)
+        if color:
+            variable.set(color)
+            if name == 'marco_color_fondo':
+                self.hud_appearance_vars['marco_fondo'].set('color')
+            self.save_preferences()
 
     def choose_visual(self):
         path = filedialog.askopenfilename(parent=self.root, title='Imagen para el aviso',
@@ -3038,10 +3552,120 @@ class App:
         self.visual_file_var.set('')
         self.save_preferences()
 
+    def create_idle_goals(self, tab):
+        panel = ttk.LabelFrame(tab, text='Objetivo de IDLE por edad', padding=12)
+        panel.pack(fill='x', pady=6)
+        ttk.Label(panel, text='Introduce el límite en segundos. Deja el campo vacío para omitir esa edad.',
+                  wraplength=620).grid(row=0, column=0, columnspan=3, sticky='w', pady=(0, 8))
+        saved = self.config.get('objetivos_idle') or {}
+        self.goal_vars = {}
+        for row, age in enumerate(AGE_ORDER, 1):
+            variable = tk.StringVar(value=saved.get(age, ''))
+            self.goal_vars[age] = variable
+            ttk.Label(panel, text=AGE_NAMES[age]).grid(row=row, column=0, sticky='w', pady=4)
+            ttk.Entry(panel, width=9, textvariable=variable).grid(row=row, column=1, padx=10)
+            ttk.Label(panel, text='s').grid(row=row, column=2, sticky='w')
+        ttk.Label(tab, text='Para Imperial, pulsa «Comprobar fin de Imperial» cuando termine la partida.',
+                  wraplength=620).pack(anchor='w', pady=(3, 8))
+        actions = ttk.Frame(tab)
+        actions.pack(anchor='w')
+        ttk.Button(actions, text='Guardar objetivos', command=self.save_preferences).pack(side='left', padx=(0, 6))
+        ttk.Button(actions, text='Probar felicitación', command=self.test_celebration).pack(side='left', padx=6)
+        ttk.Button(actions, text='Probar objetivo no logrado',
+                   command=lambda: self.test_celebration(False)).pack(side='left', padx=6)
+        ttk.Button(actions, text='Comprobar fin de Imperial',
+                   command=self.check_imperial_goal).pack(side='left', padx=6)
+
+    def idle_goals(self):
+        goals = {}
+        for age, variable in self.goal_vars.items():
+            value = variable.get().strip()
+            if not value:
+                continue
+            try:
+                seconds = int(value)
+                if seconds < 1:
+                    raise ValueError
+            except ValueError:
+                raise ValueError(f'{AGE_NAMES[age]} necesita un objetivo en segundos enteros, mayor que cero.') from None
+            goals[age] = seconds
+        return goals
+
+    def celebration_settings(self, options):
+        return dict(options, imagen_visual=str(BASE / GOAL_PORTRAIT), mostrar_perdidas=False,
+                    objetivo_cumplido=self.goal_achieved, texto_objetivo=self.goal_banner)
+
+    def show_celebration(self, options, achieved=True):
+        self.finish_celebration()
+        self.goal_achieved = achieved
+        if achieved:
+            self.goal_banner = random.choice(GOAL_BANNERS)
+        self.visual_alert.show(self.celebration_settings(options))
+        self.celebration_job = self.root.after(GOAL_DURATION_MS, self.finish_celebration, True)
+        if not self.muted_event.is_set():
+            try:
+                clip = random.choice(GOAL_SOUNDS) if achieved else MISSED_GOAL_SOUND
+                self.sound_engine.play_celebration(clip, options['volumen'])
+            except (OSError, pygame.error) as exc:
+                self.log(f'No se pudo reproducir la felicitación: {exc}')
+
+    def finish_celebration(self, restore=False):
+        if self.celebration_job is None:
+            return
+        self.root.after_cancel(self.celebration_job)
+        self.celebration_job = None
+        if restore:
+            self.render_visual_snapshot()
+        else:
+            self.visual_alert.hide()
+
+    def render_visual_snapshot(self):
+        payload = self.latest_visual_snapshot
+        if (self.running_settings is not None and payload and payload['show_visual'] and
+                self.visual_enabled_var.get() and not self.stop_event.is_set() and
+                not self.manual_pause_event.is_set()):
+            self.visual_alert.show(self.running_settings)
+            self.visual_alert.update_metrics(payload['visual_metrics'])
+        else:
+            self.visual_alert.hide()
+
+    def test_celebration(self, achieved=True):
+        try:
+            self.show_celebration({**self.visual_config(), **self.audio_config()}, achieved)
+        except (ValueError, tk.TclError) as exc:
+            messagebox.showerror('Probar aviso de objetivo', str(exc), parent=self.root)
+
+    def check_idle_goal(self, age, elapsed):
+        goal = self.running_settings.get('objetivos_idle', {}).get(age)
+        if goal is None:
+            return None
+        self.log(f'{AGE_NAMES[age]} · IDLE {format_game_duration(elapsed)} · '
+                 f'objetivo inferior a {format_game_duration(goal)}.')
+        achieved = elapsed < goal
+        self.show_celebration(self.running_settings, achieved)
+        return achieved
+
+    def check_imperial_goal(self):
+        snapshot = self.last_age_snapshot
+        if not self.running_settings or not snapshot or snapshot['age'] != 'imperial':
+            messagebox.showinfo('Objetivo Imperial', 'Todavía no se ha registrado la Edad Imperial en la partida activa.',
+                                parent=self.root)
+            return
+        if self.imperial_checked:
+            self.log('El objetivo de Imperial ya se ha comprobado en esta partida.')
+            return
+        result = self.check_idle_goal('imperial', snapshot['values']['imperial'])
+        if result is None:
+            messagebox.showinfo('Objetivo Imperial', 'Guarda primero un objetivo para Imperial.', parent=self.root)
+            return
+        self.imperial_checked = True
+
     def test_visual(self):
         if self.thread and self.thread.is_alive():
             messagebox.showinfo('Vista previa', 'Detén la monitorización para probar el aviso.')
             return
+        self.finish_celebration()
+        self.sound_engine.stop_sound(include_celebration=True)
         options = self.visual_config()
         self.config.update(options)
         self.save()
@@ -3051,7 +3675,7 @@ class App:
             self.sound_engine.play(self.audio_config())
         self.log('Prueba visual V21: monitor elegido '+str(options.get('visual_monitor'))+'. Puedes consultar las coordenadas reales en el registro. Cambia a AoE2.')
         self.root.after(15000, lambda: self.visual_alert.hide()
-                        if self.running_settings is None else None)
+                        if self.running_settings is None and self.celebration_job is None else None)
 
     def select_sound(self):
         chosen = filedialog.askopenfilename(title='Selecciona tu aviso MP3/WAV',
@@ -3076,6 +3700,7 @@ class App:
 
     def save_preferences(self):
         try:
+            self.config['objetivos_idle'] = self.idle_goals()
             self.config.update({'monitor': int(self.monitor_var.get())})
             self.config.update(self.audio_config())
             self.config.update(self.visual_config())
@@ -3120,7 +3745,9 @@ class App:
                 self.running_settings.update(self.config)
                 # Redibuja solo ventanas visibles, sin obligar a reiniciar la partida.
                 if self.visual_alert._visible:
-                    self.visual_alert.show(self.running_settings)
+                    options = (self.celebration_settings(self.running_settings)
+                               if self.celebration_job is not None else self.running_settings)
+                    self.visual_alert.show(options)
                 if self.idle_total_on_var.get():
                     self.total_idle_overlay.show_total(self.running_settings)
                 else:
@@ -3416,6 +4043,7 @@ class App:
             self.total_idle_overlay.hide()
             self.age_idle_overlay.hide()
         try:
+            self.idle_goals()
             selected_mode = self.mode_var.get()
             if selected_mode != self.config.get('modo_calibrado', self.config.get('modo')):
                 raise ValueError('Has cambiado el modo. Vuelve a calibrar.')
@@ -3454,6 +4082,11 @@ class App:
         except Exception as exc:
             messagebox.showerror('Parámetros', str(exc))
             return
+        self.finish_celebration()
+        self.sound_engine.stop_sound(include_celebration=True)
+        self.latest_visual_snapshot = None
+        self.last_age_snapshot = None
+        self.imperial_checked = False
         self.visual_alert.hide()
         self.total_idle_overlay.hide()
         self.total_idle_overlay.update_total(0)
@@ -3478,6 +4111,7 @@ class App:
 
     def worker(self, config):
         templates = load_templates()
+        fishing_models = load_fishing_ship_models(config['escalas'])
         technology_templates = load_technology_templates() if config.get('tecnologias_activo',True) else []
         if not templates:
             self.msg_queue.put(('error', 'No se pudieron cargar los modelos.'))
@@ -3501,8 +4135,6 @@ class App:
         last_ocr, last_population = -1e9, -1e9
         last_log, last_alarm_clock = -1e9, None
         last_paused = None
-        last_idle_progress = -1e9
-        prev_idle_total = 0
         last_state = None
         hold_until = None
         held_metrics = None
@@ -3551,7 +4183,7 @@ class App:
                         roi=frame[y:y+h,x:x+w]
                         producing, kind, confidence = classify_queue_region(
                             roi,templates,technology_templates,config['escalas'],
-                            village_threshold=config['umbral'])
+                            village_threshold=config['umbral'], fishing_models=fishing_models)
                         observations.append((zone['nombre'],bool(producing)))
                         scores.append(confidence)
                         detected_kinds.append(kind)
@@ -3566,7 +4198,9 @@ class App:
                             # Un escudo/una tecnología puede incluir rojo natural.
                             # Exigimos VELO ROJO sobre el icono completo, no solo
                             # píxeles decorativos rojos (antiguo falso IDLE).
-                            red_active=red_overlay_on_icon(frame[ry:ry+rh,rx:rx+rw])
+                            indicator = frame[ry:ry+rh,rx:rx+rw]
+                            red_active = (red_overlay_on_icon(indicator) and
+                                          not fishing_ship_boxes(indicator, fishing_models))
                         if red_active and observations:
                             # Asociar el rojo a su TC si comparte una zona.
                             matches=[i for i,z in enumerate(config['zonas']) if
@@ -3596,8 +4230,6 @@ class App:
                                 store_age_snapshot(latest_age_shot,engine.current_clock,archive=True)
                             engine.reset()
                             age_engine.reset()
-                            prev_idle_total=0
-                            last_idle_progress=-1e9
                             last_age_saved_clock=None
                             last_age_saved_name=None
                             observed_age=None
@@ -3616,12 +4248,8 @@ class App:
                         elif read is None and config.get('reiniciar_al_reloj_cero',True):
                             restart_detector.observe(None)
                     shot=engine.sample(observations, clock_read, read, paused=paused)
-                    if shot['total'] > prev_idle_total and not paused:
-                        last_idle_progress=now
-                    prev_idle_total=shot['total']
-                    hourglass_active=(not paused and shot['clock_ok'] and
-                       any(v is False for _,v in observations) and
-                       now-last_idle_progress <= 1.3)
+                    hourglass_active = (not paused and shot['clock_ok'] and
+                                        (shot['idle'] > 0 or any(value is False for _, value in observations)))
                     # Dos fuentes independientes: escudo enmascarado + OCR de
                     # texto amarillo/blanco. Un desacuerdo no fuerza edad.
                     if ((age_templates or age_text_enabled) and
@@ -3758,11 +4386,12 @@ class App:
             self.msg_queue.put(('stopped',None))
 
     def stop(self):
+        self.finish_celebration()
         self.total_idle_overlay.update_total(self.total_idle_overlay.value_seconds,False)
         self.total_idle_overlay.hide()
         self.game_controls.hide()
         self.visual_alert.hide()
-        self.sound_engine.stop_sound()
+        self.sound_engine.stop_sound(include_celebration=True)
         self.latest_metrics = None
         self.stop_event.set()
         self.status_var.set('DETENIENDO…')
@@ -3780,22 +4409,31 @@ class App:
                     self.logbox.see('end')
                     self.logbox.config(state='disabled')
                 elif kind == 'snapshot':
+                    self.latest_visual_snapshot = payload
                     self.status_var.set(payload['state'])
                     self.details_var.set(payload['details'])
                     self.latest_metrics = payload['metrics']
                     self.idle_total_text_var.set(format_game_duration(payload['total']))
                     self.total_idle_overlay.update_total(payload['total'],payload.get('hourglass_active',False))
                     if payload.get('ages'):
+                        before = self.last_age_snapshot
                         self.last_age_snapshot=payload['ages']
                         self.age_idle_overlay.update_ages(payload['ages'])
                         age_name = AGE_NAMES.get(payload['ages'].get('age'), 'sin identificar')
                         self.current_age_var.set('Edad reconocida: '+age_name + ' · Fuente: ' + payload.get('age_source','--'))
-                    if payload['show_visual'] and self.running_settings is not None and self.visual_enabled_var.get():
-                        self.visual_alert.show(self.running_settings)
-                        self.visual_alert.update_metrics(payload['visual_metrics'])
-                    else:
-                        self.visual_alert.hide()
+                        previous_age = before.get('age') if before else None
+                        current_age = payload['ages']['age']
+                        if (self.running_settings is not None and not self.stop_event.is_set() and
+                                previous_age in AGE_ORDER[:-1] and
+                                current_age == AGE_ORDER[AGE_ORDER.index(previous_age) + 1]):
+                            self.check_idle_goal(previous_age, payload['ages']['values'][previous_age])
+                    if self.celebration_job is None:
+                        self.render_visual_snapshot()
                 elif kind == 'reset':
+                    self.finish_celebration()
+                    self.sound_engine.stop_sound(include_celebration=True)
+                    self.latest_visual_snapshot = None
+                    self.imperial_checked = False
                     self.latest_metrics = None
                     self.last_age_snapshot = None
                     self.idle_total_text_var.set('00:00')
@@ -3819,6 +4457,8 @@ class App:
                     self.logbox.insert('end', 'ERROR: '+payload+'\n')
                     self.logbox.config(state='disabled')
                 elif kind == 'stopped':
+                    self.finish_celebration()
+                    self.latest_visual_snapshot = None
                     self.game_controls.hide()
                     self.total_idle_overlay.hide()
                     self.age_idle_overlay.hide()
@@ -3834,6 +4474,7 @@ class App:
 
     def close(self):
         self.stop_event.set()
+        self.finish_celebration()
         self.sound_engine.close()
         self.visual_alert.close()
         self.total_idle_overlay.close()
@@ -3845,10 +4486,7 @@ class App:
 def main():
     set_dpi_awareness()
     root = tk.Tk()
-    try:
-        ttk.Style().theme_use('clam')
-    except tk.TclError:
-        pass
+    apply_parchment_theme(root)
     App(root)
     root.mainloop()
 

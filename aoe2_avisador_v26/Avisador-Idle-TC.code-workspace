@@ -1,0 +1,12 @@
+{
+  "folders": [
+    {
+      "name": "Avisador Idle TC",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "${workspaceFolder:Avisador Idle TC}/.venv/Scripts/python.exe",
+    "python.terminal.activateEnvironment": true
+  }
+}

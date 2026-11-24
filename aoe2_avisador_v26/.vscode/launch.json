@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Depurar Avisador Idle TC V26",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/avisador_v26.py",
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    }
+  ]
+}
