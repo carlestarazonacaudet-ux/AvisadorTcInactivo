@@ -1977,6 +1977,7 @@ class VisualAlert:
                          highlightbackground=GOLD_BORDER, highlightcolor=GOLD_BORDER)
         outer.pack(fill='both', expand=True)
         outer = outer.content
+        alert_title = None
         if goal_result:
             padding = round(10 * scale / 100)
             banner_options = dict(bg=background, padx=padding, pady=round(8 * scale / 100),
@@ -1990,14 +1991,10 @@ class VisualAlert:
             headline.pack(fill='x')
         else:
             padding = round(15 * scale / 100)
-            caption = 'CREA ALDEANOS !!'
-            font = Font(root=outer, family='Segoe UI', size=scaled_font(13, scale), weight='bold')
-            available = max(1, art.width - 2 * padding - 4)
-            while font.cget('size') > 1 and font.measure(caption) > available:
-                font.configure(size=font.cget('size') - 1)
-            SoftPulseHudLabel(outer, text=caption, size=font.cget('size'),
-                              color=DEFAULTS['marco_color_letras'], pulse_to=MISSED_GOAL_COLOR,
-                              bg=background, padx=padding, pady=round(8 * scale / 100)).pack(fill='x')
+            alert_title = SoftPulseHudLabel(outer, text='CREA ALDEANOS !!', size=scaled_font(13, scale),
+                                           color=DEFAULTS['marco_color_letras'], pulse_to=MISSED_GOAL_COLOR,
+                                           bg=background, padx=padding, pady=round(8 * scale / 100))
+            alert_title.pack(fill='x')
         portrait = HudLabel(outer, art=art, bg=background, borderwidth=0,
                             highlightthickness=0, padx=0, pady=0)
         portrait.pack(padx=round((2 if left_alert else 8) * scale / 100),
@@ -2036,6 +2033,22 @@ class VisualAlert:
             self.time_label = None
             self.loss_label = None
         win.update_idletasks()
+        if alert_title is not None:
+            caption = alert_title.cget('text')
+            available = max(1, outer.winfo_reqwidth() - 2 * padding - 6)
+            font = Font(root=outer, family='Segoe UI', size=-32, weight='bold')
+            pixels = max(1, 32 * available // max(1, font.measure(caption)))
+            font.configure(size=-pixels)
+            while pixels > 1 and font.measure(caption) > available:
+                pixels -= 1
+                font.configure(size=-pixels)
+            while True:
+                font.configure(size=-(pixels + 1))
+                if font.measure(caption) > available:
+                    break
+                pixels += 1
+            alert_title.configure(font=('Segoe UI', -pixels, 'bold'))
+            win.update_idletasks()
         full_height = win.winfo_reqheight()
         full_width = win.winfo_reqwidth()
         if settings.get('visual_posicion_libre', False):
