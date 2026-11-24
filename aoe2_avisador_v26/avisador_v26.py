@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
+from tkinter.font import Font
 from PIL import Image, ImageDraw, ImageOps, ImageSequence, ImageTk
 
 import cv2
@@ -293,11 +294,13 @@ class HudLabel(tk.Label):
 
 class SoftPulseHudLabel(HudLabel):
     """Aclara las letras suavemente sin variar su tamaño ni su posición."""
-    def __init__(self, parent, *, size, color, **options):
+    def __init__(self, parent, *, size, color, pulse_to=None, **options):
         self.job = None
         self.started = 0.0
         super().__init__(parent, fg=color, font=('Segoe UI', size, 'bold'), **options)
         self.ink = tuple(round(channel / 257) for channel in self.winfo_rgb(color))
+        self.pulse_ink = (tuple(round(channel / 257) for channel in self.winfo_rgb(pulse_to))
+                          if pulse_to else tuple(round(value + (255 - value) * .22) for value in self.ink))
         self.bind('<Map>', self._start, add='+')
         self.bind('<Unmap>', self._stop, add='+')
         self.bind('<Destroy>', self._stop, add='+')
@@ -318,8 +321,8 @@ class SoftPulseHudLabel(HudLabel):
 
     def _update_color(self):
         elapsed = time.monotonic() - self.started if self.started else 0
-        pulse = .11 * (1 - math.cos(2 * math.pi * elapsed / 2.8))
-        rgb = (round(value + (255 - value) * pulse) for value in self.ink)
+        pulse = (1 - math.cos(2 * math.pi * elapsed / 2.8)) / 2
+        rgb = (round(start + (end - start) * pulse) for start, end in zip(self.ink, self.pulse_ink))
         self.canvas.itemconfigure(self.caption_item, fill='#{:02x}{:02x}{:02x}'.format(*rgb))
 
     def _tick(self):
@@ -1891,13 +1894,13 @@ class VisualAlert:
 
     def _resolve_image(self, settings):
         custom = settings.get('imagen_visual', '').strip()
-        candidate = Path(custom) if custom else BASE / 'aviso_visual.png'
+        candidate = Path(custom) if custom else BASE / 'aldeano_azul.png'
         try:
             return Image.open(candidate).convert('RGBA')
         except Exception as exc:
             if custom:
                 self.log('No se pudo cargar imagen personalizada; se usara la predeterminada: '+str(exc))
-            return Image.open(BASE / 'aviso_visual.png').convert('RGBA')
+            return Image.open(BASE / 'aldeano_azul.png').convert('RGBA')
 
     def _build(self, settings):
         background, text_color = hud_colors(settings)
@@ -1938,10 +1941,15 @@ class VisualAlert:
             width = min(width, max(1, screenw - 2 * (margin + 22 + border + 16)))
             art = image.resize((width, max(1, round(width * image.height / image.width))),
                                Image.Resampling.LANCZOS)
+            padding = round((2 if left_alert else 8) * scale / 100)
+            frame_inset = border + 7 + padding
+            overhang = 22 if os.name == 'nt' else 0
+            max_art_width = screenw - 2 * (margin + overhang + frame_inset)
+            banner_width = max(art.width, min(3 * art.width + 4 * frame_inset, max_art_width))
+            banner = Image.new('RGBA', (banner_width, art.height))
+            banner.alpha_composite(art, ((banner_width - art.width) // 2, 0))
+            art = banner
         elif left_alert:
-            if not settings.get('imagen_visual', '').strip():
-                with Image.open(BASE / 'aldeano_azul.png') as portrait:
-                    image = portrait.convert('RGBA')
             # Usar toda la anchura útil y ceder espacio vertical a la imagen.
             # Recortar solo el margen transparente, sin deformar el dibujo.
             bounds = image.getbbox()
@@ -1982,10 +1990,14 @@ class VisualAlert:
             headline.pack(fill='x')
         else:
             padding = round(15 * scale / 100)
-            SoftPulseHudLabel(outer, text='CREA ALDEANOS !!', size=scaled_font(13, scale),
-                            color=text_color, bg=background, padx=padding,
-                            wraplength=max(1, art.width - 2 * padding - 4), justify='center',
-                            pady=round(8 * scale / 100)).pack(fill='x')
+            caption = 'CREA ALDEANOS !!'
+            font = Font(root=outer, family='Segoe UI', size=scaled_font(13, scale), weight='bold')
+            available = max(1, art.width - 2 * padding - 4)
+            while font.cget('size') > 1 and font.measure(caption) > available:
+                font.configure(size=font.cget('size') - 1)
+            SoftPulseHudLabel(outer, text=caption, size=font.cget('size'),
+                              color=DEFAULTS['marco_color_letras'], pulse_to=MISSED_GOAL_COLOR,
+                              bg=background, padx=padding, pady=round(8 * scale / 100)).pack(fill='x')
         portrait = HudLabel(outer, art=art, bg=background, borderwidth=0,
                             highlightthickness=0, padx=0, pady=0)
         portrait.pack(padx=round((2 if left_alert else 8) * scale / 100),
@@ -2870,7 +2882,7 @@ class App:
                         variable=self.visual_enabled_var, command=lambda: self.toggle_overlay_visibility('visual', from_ui=True)).pack(anchor='w', pady=4)
         pic = ttk.LabelFrame(visual_tab, text='Imagen del aviso visual', padding=12)
         pic.pack(fill='x', pady=5)
-        ttk.Label(pic, text='Deja vacío el archivo para usar el icono incluido: ! + dos aldeanos.').pack(anchor='w')
+        ttk.Label(pic, text='Deja vacío el archivo para usar el dibujo del aldeano azul.').pack(anchor='w')
         line = ttk.Frame(pic)
         line.pack(fill='x', pady=5)
         ttk.Button(line, text='Elegir imagen PNG/JPG/WebP…', command=self.choose_visual).pack(side='left')
