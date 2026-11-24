@@ -246,10 +246,12 @@ class HudLabel(tk.Label):
 
 
 class PulsingHudLabel(HudLabel):
-    def __init__(self, parent, *, size, color, **options):
+    def __init__(self, parent, *, size, color, minimum_scale=1.0, lighten=True, **options):
+        self.minimum_size = max(1, round(size * minimum_scale))
         self.base_size = size
         self.peak_size = round(size * 1.5)
         self.ink = color
+        self.lighten = lighten
         self.job = None
         self.start_time = 0
         font = Font(root=parent, family='Segoe UI', size=size, weight='bold')
@@ -277,10 +279,13 @@ class PulsingHudLabel(HudLabel):
     def _apply_pulse(self):
         elapsed = time.monotonic() - self.start_time if self.start_time else 0
         pulse = (1 - math.cos(2 * math.pi * elapsed / 1.15)) / 2
-        self.pulse_font.configure(size=round(self.base_size + (self.peak_size - self.base_size) * pulse))
-        rgb = (round(value / 257 + (255 - value / 257) * .65 * pulse)
-               for value in self.winfo_rgb(self.ink))
-        shade = '#{:02x}{:02x}{:02x}'.format(*rgb)
+        size = round(self.minimum_size + (self.peak_size - self.minimum_size) * pulse)
+        self.pulse_font.configure(size=size)
+        shade = self.ink
+        if self.lighten:
+            rgb = (round(value / 257 + (255 - value / 257) * .65 * pulse)
+                   for value in self.winfo_rgb(self.ink))
+            shade = '#{:02x}{:02x}{:02x}'.format(*rgb)
         self.canvas.itemconfigure('caption', font=self.pulse_font, fill=shade)
 
     def _tick(self):
@@ -356,6 +361,7 @@ DEFAULTS = {
     'rojo_activo': True, 'zona_rojo': None, 'rojo_ratio_ref': 0.0,
     'tecnologias_activo': True, 'mostrar_aviso_visual': True,
     'objetivos_idle': {},
+    'duracion_aviso_objetivo': 7,
 }
 HUD_APPEARANCE = {key: value for key, value in DEFAULTS.items() if key.startswith('marco_')}
 BUILTIN_ALERTS = {'no_puede_ser': ('No puede ser', 'no puede ser.mp3'),
@@ -374,7 +380,6 @@ GOAL_BANNERS = (
 MISSED_GOAL_BANNER = 'Mi abuelita se las arregla mucho mejor...'
 MISSED_GOAL_COLOR = '#FF6565'
 MISSED_GOAL_SOUND = 'abuelit.mp3'
-GOAL_DURATION_MS = 7000
 
 
 def audio_repeat_due(game_clock, previous_alert_clock, repeat_seconds):
@@ -1872,8 +1877,20 @@ class VisualAlert:
         if settings.get('visual_alerta_grande', True):
             size = max(240, size)
         size = max(50, round(size * scale / 100))
+        border = max(2, round(PANEL_BORDER * scale / 100))
+        margin = 30
+        with mss.mss() as sct:
+            mons = sct.monitors
+            selected = int(settings.get('visual_monitor', 1))
+            if not 1 <= selected < len(mons):
+                selected = 1
+                self.log('El monitor de aviso ya no está conectado; se usa el monitor 1.')
+            monitor = mons[selected]
+            left, top = int(monitor['left']), int(monitor['top'])
+            screenw, screenh = int(monitor['width']), int(monitor['height'])
         image = self._resolve_image(settings)
         goal_result = settings.get('imagen_visual') == str(BASE / GOAL_PORTRAIT)
+        wide_goal = goal_result and settings.get('objetivo_cumplido', True)
         corner = settings.get('visual_esquina', 'inferior_derecha')
         if settings.get('visual_posicion_libre', False):
             left_alert = float(settings.get('visual_pos_x', 80)) < 50
@@ -1884,6 +1901,12 @@ class VisualAlert:
             if bounds:
                 image = image.crop(bounds)
             width = round(size * .88 * math.sqrt(2)) if left_alert else size
+            if wide_goal:
+                rail = max(8, round(11 * border / PANEL_BORDER))
+                # Triplica el marco visible y reserva espacio para sus hojas exteriores.
+                max_width = max(3, screenw - 2 * (margin + rail + 22))
+                wide_width = min(3 * width + 4 * rail, max_width)
+                width = min(width, wide_width // 3)
             art = image.resize((width, max(1, round(width * image.height / image.width))),
                                Image.Resampling.LANCZOS)
         elif left_alert:
@@ -1913,15 +1936,24 @@ class VisualAlert:
         if os.name != 'nt':
             win.wm_attributes('-alpha', opacity)
         outer = parchment_panel(win, vine_row=0, appearance=settings, edge_to_edge=goal_result,
-                         bd=0, highlightthickness=max(2, round(PANEL_BORDER * scale / 100)),
+                         bd=0, highlightthickness=border,
                          highlightbackground=GOLD_BORDER, highlightcolor=GOLD_BORDER)
         outer.pack(fill='both', expand=True)
         outer = outer.content
-        if goal_result:
-            achieved = settings.get('objetivo_cumplido', True)
-            banner_text = settings.get('texto_objetivo', GOAL_BANNERS[0]) if achieved else MISSED_GOAL_BANNER
+        if wide_goal:
+            row = hud_group(outer, bg=background, width=wide_width, height=art.height)
+            row.pack()
+            row.pack_propagate(False)
+            HudLabel(row, art=art, bg=background, bd=0, padx=0, pady=0).pack(side='left')
+            padding = round(12 * scale / 100)
+            PulsingHudLabel(row, text=settings.get('texto_objetivo', GOAL_BANNERS[0]),
+                            size=scaled_font(21, scale), color=text_color, minimum_scale=.6,
+                            lighten=False, bg=background, padx=padding,
+                            wraplength=max(1, wide_width - art.width - 2 * padding - 4)).pack(
+                                side='left', fill='both', expand=True)
+        elif goal_result:
             padding = round(10 * scale / 100)
-            HudLabel(outer, text=banner_text, fg=text_color if achieved else MISSED_GOAL_COLOR,
+            HudLabel(outer, text=MISSED_GOAL_BANNER, fg=MISSED_GOAL_COLOR,
                      bg=background, font=('Segoe UI', scaled_font(15, scale), 'bold'),
                      wraplength=max(1, art.width - 2 * padding - 4), padx=padding,
                      pady=round(8 * scale / 100)).pack(fill='x')
@@ -1929,12 +1961,14 @@ class VisualAlert:
             PulsingHudLabel(outer, text='CREA ALDEANOS !!', size=scaled_font(13, scale),
                             color=text_color, bg=background, padx=round(15 * scale / 100),
                             pady=round(8 * scale / 100)).pack(fill='x')
-        portrait = HudLabel(outer, art=art, bg=background, borderwidth=0, highlightthickness=0, padx=0, pady=0)
-        if goal_result:
-            portrait.pack(fill='x')
-        else:
-            portrait.pack(padx=round((2 if left_alert else 8) * scale / 100),
-                          pady=(round(4 * scale / 100), 0))
+        if not wide_goal:
+            portrait = HudLabel(outer, art=art, bg=background, borderwidth=0,
+                                highlightthickness=0, padx=0, pady=0)
+            if goal_result:
+                portrait.pack(fill='x')
+            else:
+                portrait.pack(padx=round((2 if left_alert else 8) * scale / 100),
+                              pady=(round(4 * scale / 100), 0))
         show_metrics = settings.get('mostrar_perdidas', True)
         if show_metrics:
             panel = hud_group(outer, bg=background, padx=round((4 if left_alert else 12)*scale/100),
@@ -1968,19 +2002,6 @@ class VisualAlert:
         else:
             self.time_label = None
             self.loss_label = None
-        win.update_idletasks()
-        # Coordenadas absolutas del escritorio virtual: los monitores a la
-        # izquierda/encima del principal pueden tener X/Y negativas.
-        with mss.mss() as sct:
-            mons = sct.monitors
-            selected = int(settings.get('visual_monitor', 1))
-            if not 1 <= selected < len(mons):
-                selected = 1
-                self.log('El monitor de aviso ya no está conectado; se usa el monitor 1.')
-            monitor = mons[selected]
-            left, top = int(monitor['left']), int(monitor['top'])
-            screenw, screenh = int(monitor['width']), int(monitor['height'])
-        margin = 30
         win.update_idletasks()
         full_height = win.winfo_reqheight()
         full_width = win.winfo_reqwidth()
@@ -3580,6 +3601,12 @@ class App:
             ttk.Label(panel, text=AGE_NAMES[age]).grid(row=row, column=0, sticky='w', pady=4)
             ttk.Entry(panel, width=9, textvariable=variable).grid(row=row, column=1, padx=10)
             ttk.Label(panel, text='s').grid(row=row, column=2, sticky='w')
+        row = len(AGE_ORDER) + 1
+        self.goal_duration_var = tk.StringVar(value=self.config['duracion_aviso_objetivo'])
+        ttk.Label(panel, text='Duración del aviso').grid(row=row, column=0, sticky='w', pady=(8, 4))
+        ttk.Spinbox(panel, width=7, from_=1, to=60, textvariable=self.goal_duration_var).grid(
+            row=row, column=1, padx=10, pady=(8, 4))
+        ttk.Label(panel, text='s').grid(row=row, column=2, sticky='w', pady=(8, 4))
         ttk.Label(tab, text='Para Imperial, pulsa «Comprobar fin de Imperial» cuando termine la partida.',
                   wraplength=620).pack(anchor='w', pady=(3, 8))
         actions = ttk.Frame(tab)
@@ -3606,6 +3633,15 @@ class App:
             goals[age] = seconds
         return goals
 
+    def goal_duration(self):
+        try:
+            seconds = int(self.goal_duration_var.get())
+        except ValueError:
+            seconds = 0
+        if not 1 <= seconds <= 60:
+            raise ValueError('La duración del aviso debe estar entre 1 y 60 segundos enteros.')
+        return seconds
+
     def celebration_settings(self, options):
         return dict(options, imagen_visual=str(BASE / GOAL_PORTRAIT), mostrar_perdidas=False,
                     objetivo_cumplido=self.goal_achieved, texto_objetivo=self.goal_banner)
@@ -3616,7 +3652,8 @@ class App:
         if achieved:
             self.goal_banner = random.choice(GOAL_BANNERS)
         self.visual_alert.show(self.celebration_settings(options))
-        self.celebration_job = self.root.after(GOAL_DURATION_MS, self.finish_celebration, True)
+        seconds = options.get('duracion_aviso_objetivo', DEFAULTS['duracion_aviso_objetivo'])
+        self.celebration_job = self.root.after(seconds * 1000, self.finish_celebration, True)
         if not self.muted_event.is_set():
             try:
                 clip = random.choice(GOAL_SOUNDS) if achieved else MISSED_GOAL_SOUND
@@ -3646,7 +3683,9 @@ class App:
 
     def test_celebration(self, achieved=True):
         try:
-            self.show_celebration({**self.visual_config(), **self.audio_config()}, achieved)
+            options = {**self.visual_config(), **self.audio_config(),
+                       'duracion_aviso_objetivo': self.goal_duration()}
+            self.show_celebration(options, achieved)
         except (ValueError, tk.TclError) as exc:
             messagebox.showerror('Probar aviso de objetivo', str(exc), parent=self.root)
 
@@ -3715,7 +3754,9 @@ class App:
 
     def save_preferences(self):
         try:
+            duration = self.goal_duration()
             self.config['objetivos_idle'] = self.idle_goals()
+            self.config['duracion_aviso_objetivo'] = duration
             self.config.update({'monitor': int(self.monitor_var.get())})
             self.config.update(self.audio_config())
             self.config.update(self.visual_config())
@@ -4059,6 +4100,7 @@ class App:
             self.age_idle_overlay.hide()
         try:
             self.idle_goals()
+            self.goal_duration()
             selected_mode = self.mode_var.get()
             if selected_mode != self.config.get('modo_calibrado', self.config.get('modo')):
                 raise ValueError('Has cambiado el modo. Vuelve a calibrar.')
