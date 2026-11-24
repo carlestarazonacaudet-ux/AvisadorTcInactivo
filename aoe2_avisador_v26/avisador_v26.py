@@ -81,7 +81,7 @@ def picture_frame(paper, thickness, style='madera_tallada'):
 
 
 
-def parchment_panel(parent, *, vine_row=None, appearance=None, **options):
+def parchment_panel(parent, *, vine_row=None, appearance=None, edge_to_edge=False, **options):
     """Marco dorado con grano de papel y bordes envejecidos."""
     border = int(options.get('highlightthickness', 0))
     vines = ()
@@ -111,8 +111,10 @@ def parchment_panel(parent, *, vine_row=None, appearance=None, **options):
         frame.hud_painters = {}
         frame.content = hud_group(frame, bg=background, **padding) if appearance is not None else parchment_panel(frame, **padding)
         top_gap = round({1: 17, 2: 18, 3: 10}.get(vine_row, 30) * border / PANEL_BORDER)
-        frame.content.pack(fill='both', expand=True, padx=7 + overhang[0],
-                           pady=(top_gap + overhang[1], 7 + overhang[1]))
+        frame_width = max(8, round(11 * border / PANEL_BORDER))
+        inset_gap = max(0, frame_width - border) if edge_to_edge else 7
+        frame.content.pack(fill='both', expand=True, padx=inset_gap + overhang[0],
+                           pady=(top_gap + overhang[1], inset_gap + overhang[1]))
 
     def draw_paper(event):
         if event.width < 2 or event.height < 2:
@@ -140,7 +142,7 @@ def parchment_panel(parent, *, vine_row=None, appearance=None, **options):
             paper = Image.fromarray(np.clip(pixels, 0, 255).astype(np.uint8))
         if vines:
             style = (appearance or HUD_APPEARANCE).get('marco_estilo', HUD_APPEARANCE['marco_estilo'])
-            picture_frame(paper, max(8, round(11 * border / PANEL_BORDER)), style)
+            picture_frame(paper, frame_width, style)
             if frame.hud_overhang:
                 interior = paper
                 paper = Image.new('RGB', (width, height), HUD_TRANSPARENT)
@@ -1871,12 +1873,20 @@ class VisualAlert:
             size = max(240, size)
         size = max(50, round(size * scale / 100))
         image = self._resolve_image(settings)
+        goal_result = settings.get('imagen_visual') == str(BASE / GOAL_PORTRAIT)
         corner = settings.get('visual_esquina', 'inferior_derecha')
         if settings.get('visual_posicion_libre', False):
             left_alert = float(settings.get('visual_pos_x', 80)) < 50
         else:
             left_alert = corner.endswith('izquierda')
-        if left_alert:
+        if goal_result:
+            bounds = image.getchannel('A').getbbox()
+            if bounds:
+                image = image.crop(bounds)
+            width = round(size * .88 * math.sqrt(2)) if left_alert else size
+            art = image.resize((width, max(1, round(width * image.height / image.width))),
+                               Image.Resampling.LANCZOS)
+        elif left_alert:
             if not settings.get('imagen_visual', '').strip():
                 with Image.open(BASE / 'aldeano_azul.png') as portrait:
                     image = portrait.convert('RGBA')
@@ -1902,26 +1912,29 @@ class VisualAlert:
         opacity = max(30, min(100, int(settings.get('visual_opacidad', 95))))/100
         if os.name != 'nt':
             win.wm_attributes('-alpha', opacity)
-        outer = parchment_panel(win, vine_row=0, appearance=settings, bd=0, highlightthickness=max(2, round(PANEL_BORDER * scale / 100)),
+        outer = parchment_panel(win, vine_row=0, appearance=settings, edge_to_edge=goal_result,
+                         bd=0, highlightthickness=max(2, round(PANEL_BORDER * scale / 100)),
                          highlightbackground=GOLD_BORDER, highlightcolor=GOLD_BORDER)
         outer.pack(fill='both', expand=True)
         outer = outer.content
-        if settings.get('imagen_visual') == str(BASE / GOAL_PORTRAIT):
-            banner = dict(bg=background, wraplength=max(140, art.width),
-                          padx=round(10 * scale / 100), pady=round(8 * scale / 100))
-            if settings.get('objetivo_cumplido', True):
-                PulsingHudLabel(outer, text=settings.get('texto_objetivo', GOAL_BANNERS[0]),
-                                size=scaled_font(15, scale), color=text_color, **banner).pack(fill='x')
-            else:
-                HudLabel(outer, text=MISSED_GOAL_BANNER, fg=MISSED_GOAL_COLOR,
-                         font=('Segoe UI', scaled_font(15, scale), 'bold'), **banner).pack(fill='x')
+        if goal_result:
+            achieved = settings.get('objetivo_cumplido', True)
+            banner_text = settings.get('texto_objetivo', GOAL_BANNERS[0]) if achieved else MISSED_GOAL_BANNER
+            padding = round(10 * scale / 100)
+            HudLabel(outer, text=banner_text, fg=text_color if achieved else MISSED_GOAL_COLOR,
+                     bg=background, font=('Segoe UI', scaled_font(15, scale), 'bold'),
+                     wraplength=max(1, art.width - 2 * padding - 4), padx=padding,
+                     pady=round(8 * scale / 100)).pack(fill='x')
         else:
             PulsingHudLabel(outer, text='CREA ALDEANOS !!', size=scaled_font(13, scale),
                             color=text_color, bg=background, padx=round(15 * scale / 100),
                             pady=round(8 * scale / 100)).pack(fill='x')
-        HudLabel(outer, art=art, bg=background, borderwidth=0,
-                 highlightthickness=0).pack(padx=round((2 if left_alert else 8)*scale/100),
-                                           pady=(round(4*scale/100), 0))
+        portrait = HudLabel(outer, art=art, bg=background, borderwidth=0, highlightthickness=0, padx=0, pady=0)
+        if goal_result:
+            portrait.pack(fill='x')
+        else:
+            portrait.pack(padx=round((2 if left_alert else 8) * scale / 100),
+                          pady=(round(4 * scale / 100), 0))
         show_metrics = settings.get('mostrar_perdidas', True)
         if show_metrics:
             panel = hud_group(outer, bg=background, padx=round((4 if left_alert else 12)*scale/100),
@@ -2048,8 +2061,6 @@ class VisualAlert:
                 get_style.restype = ctypes.c_ssize_t
                 get_style.argtypes = [ctypes.c_void_p, ctypes.c_int]
                 set_style.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
-                self.window.deiconify()
-                self.window.update_idletasks()
                 current = int(get_style(hwnd, GWL_EXSTYLE))
                 set_style(hwnd, GWL_EXSTYLE, current|WS_EX_TRANSPARENT|WS_EX_LAYERED|WS_EX_NOACTIVATE)
                 # Windows necesita inicializar la capa antes de mostrar su contenido.
@@ -2059,10 +2070,14 @@ class VisualAlert:
                 panel = self.window.winfo_children()[0]
                 color_key = sum(value << (8 * i) for i, value in enumerate(HUD_TRANSPARENT))
                 flags = 0x03 if panel.hud_overhang else 0x02  # LWA_COLORKEY | LWA_ALPHA
+                # Mapea y coloca la ventana sin mostrar el primer repintado de Tk.
+                set_alpha(hwnd, color_key, 0, flags)
+                self.window.deiconify()
+                self.window.update_idletasks()
+                self._place_native()
                 if not set_alpha(hwnd, color_key, round(255 * key[3]), flags):
                     # Recuperar una ventana opaca si falla la composición de la capa.
                     set_style(hwnd, GWL_EXSTYLE, (current | WS_EX_NOACTIVATE) & ~WS_EX_LAYERED)
-                self._place_native()
             else:
                 self.window.deiconify()
             self.window.attributes('-topmost', True)
